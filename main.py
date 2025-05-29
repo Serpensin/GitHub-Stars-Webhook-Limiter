@@ -1,15 +1,13 @@
-import json
-import os
-from platform import release
-import sys
-import sqlite3
-import requests
 import hashlib
 import hmac
+import json
+import os
+import requests
 import sentry_sdk
-from flask import Flask, request, g
-from sentry_sdk.integrations.flask import FlaskIntegration
+import sqlite3
+import sys
 from dotenv import load_dotenv
+from flask import Flask, request, g
 
 
 
