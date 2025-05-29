@@ -1,0 +1,1 @@
+# GitHub Stars Webhook Limiter
