@@ -7,7 +7,7 @@ import sentry_sdk
 import sqlite3
 import sys
 from dotenv import load_dotenv
-from flask import Flask, request, g, Request
+from flask import Flask, request, g, Request, jsonify
 
 
 
@@ -54,43 +54,59 @@ except sqlite3.Error as e:
 
 @app.route('/', methods=['GET'])
 def index():
-    return f"{APP_NAME} v{APP_VERSION} is running!", 200, {'Content-Type': 'text/plain; charset=utf-8'}
+    return jsonify({
+        "app": APP_NAME,
+        "version": APP_VERSION,
+        "status": "running"
+    }), 200
 
 @app.route('/send', methods=['POST'])
 def foo():
     if not request.is_json:
-        return "Invalid JSON", 400, {'Content-Type': 'text/plain; charset=utf-8'}
-    data = request.get_json()
+        return jsonify_error("Expected application/json")
+
+    data = request.get_json(silent=True)
+    if not data:
+        return jsonify_error("Malformed or empty JSON")
+
     repo_full_name = data.get('repository', {}).get('full_name')
     if not repo_full_name:
-        return "Repository not found in payload", 400, {'Content-Type': 'text/plain; charset=utf-8'}
+        return jsonify_error("Missing 'repository.full_name'")
+
     repo_data = getRepoData(repo_full_name)
     if not repo_data:
-        return "Repository not found in configuration", 404, {'Content-Type': 'text/plain; charset=utf-8'}
-
-    headers = request.headers
-    json_data = request.json
+        return jsonify_error("Repository not found in config", 404)
 
     if not isValidSecret(repo_data['secret'], request):
-        return "Invalid secret", 403, {'Content-Type': 'text/plain; charset=utf-8'}
+        return jsonify_error("Invalid secret", 403)
 
-    if not isStarEvent(headers):
-        return "Not a star event", 422, {'Content-Type': 'text/plain; charset=utf-8'}
+    if not isStarEvent(request.headers):
+        return jsonify_error("Not a star event", 422)
 
-    if not isActionCreated(json_data):
-        return "Action is not created", 422, {'Content-Type': 'text/plain; charset=utf-8'}
+    if not isActionCreated(data):
+        return jsonify_error("Action is not created", 422)
 
     sender_id = data.get('sender', {}).get('id')
     if sender_id is None:
-        return "Sender ID missing", 400, {'Content-Type': 'text/plain; charset=utf-8'}
+        return jsonify_error("Missing sender ID")
 
     if not hasUserStaredBefore(sender_id, repo_full_name):
         if send_to_discord(repo_data['discord_webhook_url'], data):
             addStarredRepo(sender_id, repo_full_name)
 
-    return "Event processed successfully", 200, {'Content-Type': 'text/plain; charset=utf-8'}
+    return jsonify_success("Event processed successfully")
 
 
+
+def jsonify_error(message: str, status_code: int = 400):
+    response = jsonify({"error": message})
+    response.status_code = status_code
+    return response
+
+def jsonify_success(message: str = "OK", status_code: int = 200):
+    response = jsonify({"message": message})
+    response.status_code = status_code
+    return response
 
 
 
