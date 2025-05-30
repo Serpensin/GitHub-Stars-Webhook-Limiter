@@ -38,8 +38,16 @@
   <ItemGroup>
     <Content Include=".env" />
     <Content Include=".env.template" />
+    <Content Include=".github\workflows\docker-image.yml" />
     <Content Include="config.json.template" />
     <Content Include="config.json" />
+    <Content Include="debug_docker.bat" />
+    <Content Include="Dockerfile" />
+    <Content Include="requirements.txt" />
+  </ItemGroup>
+  <ItemGroup>
+    <Folder Include=".github\" />
+    <Folder Include=".github\workflows\" />
   </ItemGroup>
   <Import Project="$(MSBuildExtensionsPath32)\Microsoft\VisualStudio\v$(VisualStudioVersion)\Python Tools\Microsoft.PythonTools.targets" />
   <!-- Uncomment the CoreCompile target to enable the Build command in
