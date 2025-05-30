@@ -173,5 +173,5 @@ cython_debug/
 # PyPI configuration file
 .pypirc
 /.vs/GitHub Stars Webhook Limiter
-/GitHub Stars Limiter
-/config.json
+/GitHub_Stars_Limiter
+*.json
