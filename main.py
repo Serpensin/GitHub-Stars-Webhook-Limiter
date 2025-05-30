@@ -4,6 +4,7 @@ import json
 import os
 import sqlite3
 import sys
+import time
 
 import requests
 import sentry_sdk
@@ -28,7 +29,8 @@ Main features:
 
 load_dotenv()
 APP_NAME = 'GitHub_Stars_Limiter'
-APP_VERSION = '1.0.0'
+APP_VERSION = '1.1.0'
+TTL = 5  # Seconds until the cached config expires and gets reloaded
 
 """
 Initializes Sentry SDK for error monitoring and performance tracing.
@@ -52,14 +54,9 @@ sentry_sdk.init(
     environment="Production",
     release=f"{APP_NAME}@{APP_VERSION}",
 )
+_config_cache = {"data": None, "expires": 0}
 
 app = Flask(__name__)
-
-try:
-    with open('config.json', encoding='utf-8') as f:
-        CONFIG = json.load(f)
-except FileNotFoundError:
-    sys.exit(f"Configuration file 'config.json' not found.")
 
 os.makedirs(APP_NAME, exist_ok=True)
 
@@ -251,7 +248,11 @@ def isActionCreated(data: dict) -> bool:
 
 def getRepoData(repo_name: str) -> dict | None:
     """
-    Retrieves the configuration data for a given repository name.
+    Retrieves the configuration data for a specific repository.
+
+    This function loads the application configuration and returns the configuration
+    dictionary for the specified repository name. If the repository is not found in
+    the configuration, it returns None.
 
     Args:
         repo_name (str): The full name of the repository (e.g., 'owner/repo').
@@ -259,7 +260,8 @@ def getRepoData(repo_name: str) -> dict | None:
     Returns:
         dict | None: The configuration dictionary for the repository if found, otherwise None.
     """
-    return CONFIG.get("repositories", {}).get(repo_name)
+    config = load_config()
+    return config.get("repositories", {}).get(repo_name)
 
 def hasUserStaredBefore(github_user_id: int, repository: str) -> bool:
     """
@@ -319,6 +321,32 @@ def isValidSecret(secret: str, flask_request: Request) -> bool:
     return hmac.compare_digest(expected_signature, signature)
 
 
+
+def load_config():
+    """
+    Loads the application configuration from the CONFIG_PATH JSON file with caching.
+
+    This function checks if the cached configuration has expired based on the TTL (time-to-live).
+    If the cache is expired or not set, it attempts to read and parse the configuration file.
+    The configuration is then cached for subsequent calls within the TTL window.
+    If the file is not found, the application exits with an error.
+    If the JSON is invalid, an error is printed and the cache is set to None.
+
+    Returns:
+        dict or None: The loaded configuration dictionary if successful, otherwise None.
+    """
+    now = time.monotonic()
+    if now >= _config_cache["expires"]:
+        try:
+            with open("config.json", encoding="utf-8") as f:
+                _config_cache["data"] = json.load(f)
+                _config_cache["expires"] = now + TTL
+        except FileNotFoundError:
+            sys.exit(f"Configuration file 'config.json' not found.")
+        except json.JSONDecodeError as e:
+            print(f"[Config] Invalid JSON: {e}")
+            _config_cache["data"] = None
+    return _config_cache["data"]
 
 def addStarredRepo(github_user_id: int, repository: str):
     """
