@@ -14,7 +14,7 @@ services:
     image: ghcr.io/serpensin/github-stars-webhook-limiter
     volumes:
       - /root/config.json:/app/config.json:ro
-      - data:"/app/GitHub Stars Limiter"
+      - data:/app/GitHub_Stars_Limiter
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:5000/health"]
       interval: 30s

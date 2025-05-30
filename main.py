@@ -27,7 +27,7 @@ Main features:
 
 
 load_dotenv()
-APP_NAME = 'GitHub Stars Limiter'
+APP_NAME = 'GitHub_Stars_Limiter'
 APP_VERSION = '1.0.0'
 
 """
