@@ -13,6 +13,7 @@ ARG BUILD_DATE
 ARG COMMIT
 
 RUN apk add --no-cache --virtual .build-deps build-base linux-headers libffi-dev openssl-dev && \
+    apk add curl && \
     python -m pip install --upgrade pip && \
     pip install --upgrade setuptools && \
     pip install gunicorn && \
