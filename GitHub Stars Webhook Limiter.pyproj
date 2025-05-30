@@ -42,7 +42,9 @@
     <Content Include="config.json.template" />
     <Content Include="config.json" />
     <Content Include="debug_docker.bat" />
+    <Content Include="docker-compose.yml" />
     <Content Include="Dockerfile" />
+    <Content Include="README.md" />
     <Content Include="requirements.txt" />
   </ItemGroup>
   <ItemGroup>
