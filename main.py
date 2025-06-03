@@ -29,7 +29,7 @@ Main features:
 
 load_dotenv()
 APP_NAME = 'GitHub_Stars_Limiter'
-APP_VERSION = '1.1.0'
+APP_VERSION = '1.1.1'
 TTL = 5  # Seconds until the cached config expires and gets reloaded
 
 """
@@ -393,7 +393,8 @@ def send_to_discord(url: str, data: dict) -> bool:
     """
     try:
         payload = {
-            "components": [],
+            "username": "GitHub Stars Bot",
+            "avatar_url": "https://cdn-icons-png.flaticon.com/512/616/616489.png",
             "embeds": [
                 {
                     "author": {
@@ -402,6 +403,7 @@ def send_to_discord(url: str, data: dict) -> bool:
                     },
                     "title": f"[{data['repository']['full_name']}] New star added",
                     "url": data['repository']['html_url'],
+                    "color": 0x1abc9c
                 }
             ]
         }
