@@ -173,5 +173,12 @@ cython_debug/
 # PyPI configuration file
 .pypirc
 /.vs/GitHub Stars Webhook Limiter
+
+# Application data directories (contains SQLite databases with sensitive information)
 /GitHub_Stars_Limiter
+/GitHub_Events_Limiter
+
+# Configuration files (may contain secrets)
 *.json
+config.json
+/.vs
