@@ -4,7 +4,8 @@
     <SchemaVersion>2.0</SchemaVersion>
     <ProjectGuid>06ea2d87-2e33-4683-bf9b-1f7a1cc8f658</ProjectGuid>
     <ProjectHome>.</ProjectHome>
-    <StartupFile>main.py</StartupFile>
+    <StartupFile>
+    </StartupFile>
     <SearchPath>
     </SearchPath>
     <WorkingDirectory>.</WorkingDirectory>
@@ -22,13 +23,29 @@
     <EnableUnmanagedDebugging>false</EnableUnmanagedDebugging>
   </PropertyGroup>
   <ItemGroup>
-    <Compile Include="main.py" />
+    <Content Include=".env" />
+    <Content Include=".env.example" />
+    <Content Include=".github\workflows\docker-image.yml" />
+    <Content Include="debug_docker.bat" />
+    <Content Include="docker-compose.yml" />
+    <Content Include="Dockerfile" />
+    <Content Include="README.md" />
+    <Content Include="requirements.txt" />
+    <Content Include="static\script.js" />
+    <Content Include="static\style.css" />
+    <Content Include="templates\index.html" />
+  </ItemGroup>
+  <ItemGroup>
+    <Folder Include=".github\" />
+    <Folder Include=".github\workflows\" />
+    <Folder Include="static\" />
+    <Folder Include="templates\" />
   </ItemGroup>
   <ItemGroup>
     <Interpreter Include="env\">
       <Id>env</Id>
-      <Version>3.12</Version>
-      <Description>env (Python 3.12 (64-bit))</Description>
+      <Version>3.14</Version>
+      <Description>env (Python 3.14.0)</Description>
       <InterpreterPath>Scripts\python.exe</InterpreterPath>
       <WindowsInterpreterPath>Scripts\pythonw.exe</WindowsInterpreterPath>
       <PathEnvironmentVariable>PYTHONPATH</PathEnvironmentVariable>
@@ -36,20 +53,7 @@
     </Interpreter>
   </ItemGroup>
   <ItemGroup>
-    <Content Include=".env" />
-    <Content Include=".env.template" />
-    <Content Include=".github\workflows\docker-image.yml" />
-    <Content Include="config.json.template" />
-    <Content Include="config.json" />
-    <Content Include="debug_docker.bat" />
-    <Content Include="docker-compose.yml" />
-    <Content Include="Dockerfile" />
-    <Content Include="README.md" />
-    <Content Include="requirements.txt" />
-  </ItemGroup>
-  <ItemGroup>
-    <Folder Include=".github\" />
-    <Folder Include=".github\workflows\" />
+    <Compile Include="main.py" />
   </ItemGroup>
   <Import Project="$(MSBuildExtensionsPath32)\Microsoft\VisualStudio\v$(VisualStudioVersion)\Python Tools\Microsoft.PythonTools.targets" />
   <!-- Uncomment the CoreCompile target to enable the Build command in

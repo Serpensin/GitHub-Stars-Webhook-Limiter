@@ -1,50 +1,48 @@
-import hashlib
-import hmac
-import json
-import os
-import sqlite3
-import sys
-import time
-
-import requests
-import sentry_sdk
-from dotenv import load_dotenv
-from flask import Flask, Request, g, jsonify, request
-
 """
-GitHub Stars Limiter
+GitHub Events Limiter
 
-A Flask application that listens for GitHub 'star' webhook events, validates them,
-and sends notifications to Discord webhooks if a user stars a repository for the first time.
+A Flask application that listens for GitHub webhook events (star/watch), validates them,
+and sends notifications to Discord webhooks if a user performs an action for the first time.
 It uses SQLite for persistence and supports Sentry for error monitoring.
 
 Main features:
-- Validates GitHub webhook secrets.
+- Validates GitHub webhook secrets using HMAC.
 - Prevents duplicate notifications for the same user/repo pair.
-- Sends Discord notifications for new stars.
-- Provides a health check endpoint.
+- Sends Discord notifications for new stars/watches.
+- Provides a web UI for managing repositories.
+- Stores encrypted secrets for security.
 """
 
+import hashlib
+import hmac
+import os
+import secrets
+import sqlite3
+import sys
 
+import requests
+import sentry_sdk
+from cryptography.fernet import Fernet
+from dotenv import load_dotenv
+from flask import Flask, g, jsonify, render_template, request
 
 load_dotenv()
-APP_NAME = 'GitHub_Stars_Limiter'
-APP_VERSION = '1.1.1'
-TTL = 5  # Seconds until the cached config expires and gets reloaded
+APP_NAME = "GitHub_Events_Limiter"
+APP_VERSION = "2.0.0"
 
-"""
-Initializes Sentry SDK for error monitoring and performance tracing.
+# Initialize encryption key (should be stored securely in production)
+ENCRYPTION_KEY = os.environ.get("ENCRYPTION_KEY")
+if not ENCRYPTION_KEY:
+    # Generate a key if not present and save it
+    ENCRYPTION_KEY = Fernet.generate_key().decode()
+    print("Generated new encryption key. Add this to your .env file:")
+    print(f"ENCRYPTION_KEY={ENCRYPTION_KEY}")
 
-- dsn: The Sentry DSN, loaded from environment variables.
-- send_default_pii: Enables sending personally identifiable information.
-- traces_sample_rate: Sets the sample rate for performance traces.
-- profile_session_sample_rate: Sets the sample rate for profiling sessions.
-- profile_lifecycle: Sets the profile lifecycle mode.
-- environment: Sets the environment name for Sentry.
-- release: Sets the release version for Sentry.
+cipher_suite = Fernet(
+    ENCRYPTION_KEY.encode() if isinstance(ENCRYPTION_KEY, str) else ENCRYPTION_KEY
+)
 
-This configuration enables comprehensive error and performance monitoring for the Flask application.
-"""
+# Initialize Sentry SDK for error monitoring and performance tracing
 sentry_sdk.init(
     dsn=os.environ.get("SENTRY_DSN"),
     send_default_pii=True,
@@ -54,360 +52,266 @@ sentry_sdk.init(
     environment="Production",
     release=f"{APP_NAME}@{APP_VERSION}",
 )
-_config_cache = {"data": None, "expires": 0}
 
 app = Flask(__name__)
 
 os.makedirs(APP_NAME, exist_ok=True)
 
+# Initialize database
 try:
-    conn = sqlite3.connect(os.path.join(APP_NAME, 'data.db'))
+    conn = sqlite3.connect(os.path.join(APP_NAME, "data.db"))
     c = conn.cursor()
-    c.execute('''
-    CREATE TABLE IF NOT EXISTS starred_repo (
+
+    # Table for tracking starred/watched repos
+    c.execute(
+        """
+    CREATE TABLE IF NOT EXISTS user_events (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         github_user_id INTEGER NOT NULL,
-        repository TEXT NOT NULL,
-        UNIQUE(github_user_id, repository)
+        repository_id INTEGER NOT NULL,
+        event_type TEXT NOT NULL,
+        UNIQUE(github_user_id, repository_id, event_type)
     )
-    ''')
+    """
+    )
+
+    # Table for repository configurations
+    c.execute(
+        """
+    CREATE TABLE IF NOT EXISTS repositories (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        repo_id INTEGER NOT NULL UNIQUE,
+        repo_full_name TEXT NOT NULL,
+        owner_id INTEGER NOT NULL,
+        secret_encrypted TEXT NOT NULL,
+        discord_webhook_url TEXT NOT NULL,
+        enabled_events TEXT NOT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )
+    """
+    )
+
     conn.commit()
     conn.close()
 except sqlite3.Error as e:
     sys.exit(f"Database error: {e}")
 
 
-@app.route('/', methods=['GET'])
-def index():
-    """
-    Health check endpoint for the GitHub Stars Limiter application.
-
-    Returns a JSON response containing the application name, version, and status.
-    This endpoint can be used to verify that the service is running.
-
-    Returns:
-        Response: A Flask JSON response with app metadata and status.
-    """
-    return jsonify_success({
-        "app": APP_NAME,
-        "version": APP_VERSION,
-        "status": "running"
-    })
-
-@app.route('/send', methods=['POST'])
-def handle_star_event():
-    """
-    Handles incoming GitHub 'star' webhook events.
-
-    This endpoint processes POST requests containing GitHub webhook payloads for 'star' events.
-    It performs the following steps:
-    - Validates that the request contains JSON data.
-    - Parses and validates the payload structure.
-    - Checks that the repository exists in the configuration.
-    - Validates the webhook secret using HMAC.
-    - Ensures the event is a 'star' event and the action is 'created'.
-    - Checks if the user has already starred the repository to prevent duplicate notifications.
-    - Sends a notification to the configured Discord webhook if this is the user's first star for the repository.
-    - Records the star event in the database.
-
-    Returns:
-        Response: A Flask JSON response indicating success or the specific error encountered.
-    """
-    if not request.is_json:
-        return jsonify_error("Expected application/json")
-
-    data = request.get_json(silent=True)
-    if not data:
-        return jsonify_error("Malformed or empty JSON")
-
-    repo_full_name = data.get('repository', {}).get('full_name')
-    if not repo_full_name:
-        return jsonify_error("Missing 'repository.full_name'")
-
-    repo_data = getRepoData(repo_full_name)
-    if not repo_data:
-        return jsonify_error("Repository not found in config", 404)
-
-    if not isValidSecret(repo_data['secret'], request):
-        return jsonify_error("Invalid secret", 403)
-
-    if not isStarEvent(request.headers):
-        return jsonify_error("Not a star event", 422)
-
-    if not isActionCreated(data):
-        return jsonify_error("Action is not created", 422)
-
-    sender_id = data.get('sender', {}).get('id')
-    if sender_id is None:
-        return jsonify_error("Missing sender ID")
-
-    if not hasUserStaredBefore(sender_id, repo_full_name):
-        if send_to_discord(repo_data['discord_webhook_url'], data):
-            addStarredRepo(sender_id, repo_full_name)
-
-    return jsonify_success("Event processed successfully")
-
-
-
-def jsonify_error(message: str, status_code: int = 400):
-    """
-    Returns a standardized JSON error response.
-
-    Args:
-        message (str): The error message to include in the response.
-        status_code (int, optional): The HTTP status code for the response. Defaults to 400.
-
-    Returns:
-        Response: A Flask JSON response object with the error message and status code.
-    """
-    response = jsonify({"error": message})
-    response.status_code = status_code
-    return response
-
-def jsonify_success(payload: dict | str = "OK", status_code: int = 200):
-    """
-    Returns a standardized JSON success response.
-
-    Args:
-        payload (dict | str, optional): The data to include in the response. If a dictionary is provided,
-            it will be used as the JSON response body. If a string is provided, it will be wrapped in a
-            dictionary with the key 'message'. Defaults to "OK".
-        status_code (int, optional): The HTTP status code for the response. Defaults to 200.
-
-    Returns:
-        Response: A Flask JSON response object with the provided payload and status code.
-    """
-    if isinstance(payload, dict):
-        response = jsonify(payload)
-    else:
-        response = jsonify({"message": payload})
-    response.status_code = status_code
-    return response
-
-
-
 def get_db():
     """
     Retrieves a SQLite database connection for the current Flask application context.
-
-    This function checks if a database connection already exists in the Flask `g` context object.
-    If not, it creates a new connection to the application's SQLite database file, sets the row
-    factory to return rows as dictionaries, and stores the connection in `g`. This ensures that
-    each request uses a single database connection, which is properly closed at the end of the request.
-
-    Returns:
-        sqlite3.Connection: The SQLite database connection for the current request context.
     """
-    if 'db' not in g:
-        g.db = sqlite3.connect(os.path.join(APP_NAME, 'data.db'))
+    if "db" not in g:
+        g.db = sqlite3.connect(os.path.join(APP_NAME, "data.db"))
         g.db.row_factory = sqlite3.Row
     return g.db
 
+
 @app.teardown_appcontext
-def close_db(exception=None):
+def close_db(exception=None):  # pylint: disable=unused-argument
     """
     Closes the database connection at the end of the Flask application context.
-
-    This function is registered as a Flask teardown callback. It removes the database
-    connection from the Flask `g` context object and closes it if it exists. This ensures
-    that each request properly cleans up its database resources, preventing resource leaks.
-
-    Args:
-        exception (Exception, optional): An exception raised during the request, if any.
-            Defaults to None.
     """
-    db = g.pop('db', None)
+    db = g.pop("db", None)
     if db is not None:
         db.close()
 
 
+# ============================================================================
+# Helper Functions
+# ============================================================================
 
-def isStarEvent(data: dict) -> bool:
+
+def encrypt_secret(secret: str) -> str:
     """
-    Determines if the incoming GitHub webhook event is a 'star' event.
+    Encrypts a secret for secure storage.
 
     Args:
-        data (dict): The request headers or data containing the 'x-github-event' key.
+        secret (str): The plaintext secret to encrypt.
 
     Returns:
-        bool: True if the event is a 'star' event, False otherwise.
+        str: The encrypted secret as a base64 string.
     """
-    return data.get('x-github-event') == 'star'
+    return cipher_suite.encrypt(secret.encode()).decode()
 
-def isActionCreated(data: dict) -> bool:
+
+def decrypt_secret(encrypted_secret: str) -> str:
     """
-    Checks if the GitHub webhook event action is 'created'.
+    Decrypts a stored secret.
 
     Args:
-        data (dict): The webhook event payload.
+        encrypted_secret (str): The encrypted secret string.
 
     Returns:
-        bool: True if the action is 'created', False otherwise.
+        str: The decrypted plaintext secret.
     """
-    return data.get('action') == 'created'
+    return cipher_suite.decrypt(encrypted_secret.encode()).decode()
 
-def getRepoData(repo_name: str) -> dict | None:
+
+def verify_secret(plaintext_secret: str, encrypted_secret: str) -> bool:
     """
-    Retrieves the configuration data for a specific repository.
-
-    This function loads the application configuration and returns the configuration
-    dictionary for the specified repository name. If the repository is not found in
-    the configuration, it returns None.
+    Verifies a plaintext secret against an encrypted stored secret.
 
     Args:
-        repo_name (str): The full name of the repository (e.g., 'owner/repo').
+        plaintext_secret (str): The plaintext secret to verify.
+        encrypted_secret (str): The encrypted secret to compare against.
 
     Returns:
-        dict | None: The configuration dictionary for the repository if found, otherwise None.
+        bool: True if the secret matches, False otherwise.
     """
-    config = load_config()
-    return config.get("repositories", {}).get(repo_name)
-
-def hasUserStaredBefore(github_user_id: int, repository: str) -> bool:
-    """
-    Checks if a GitHub user has already starred a specific repository.
-
-    This function queries the 'starred_repo' table in the SQLite database to determine
-    whether a record exists for the given GitHub user ID and repository name. It is used
-    to prevent duplicate notifications for the same user/repository pair.
-
-    Args:
-        github_user_id (int): The unique ID of the GitHub user.
-        repository (str): The full name of the repository (e.g., 'owner/repo').
-
-    Returns:
-        bool: True if the user has already starred the repository, False otherwise.
-    """
-    db = get_db()
     try:
-        c = db.execute(
-            'SELECT 1 FROM starred_repo WHERE github_user_id = ? AND repository = ? LIMIT 1',
-            (github_user_id, repository)
-        )
-        return c.fetchone() is not None
-    except sqlite3.Error as e:
-        print(f"Database error: {e}")
+        stored_secret = decrypt_secret(encrypted_secret)
+        return hmac.compare_digest(plaintext_secret, stored_secret)
+    except Exception:  # pylint: disable=broad-exception-caught
         return False
 
-def isValidSecret(secret: str, flask_request: Request) -> bool:
-    """
-    Validates the GitHub webhook secret using HMAC SHA-256.
 
-    This function checks the 'x-hub-signature-256' header in the incoming Flask request,
-    splits it to extract the hash algorithm and signature, and verifies that the algorithm
-    is 'sha256'. It then computes the HMAC SHA-256 digest of the request body using the
-    provided secret and compares it to the signature from the header in a timing-safe way.
+def verify_github_signature(secret: str, signature_header: str, payload: bytes) -> bool:
+    """
+    Validates the GitHub webhook signature using HMAC SHA-256.
 
     Args:
-        secret (str): The webhook secret configured for the repository.
-        flask_request (Request): The Flask request object containing headers and data.
+        secret (str): The webhook secret.
+        signature_header (str): The 'x-hub-signature-256' header value.
+        payload (bytes): The request body.
 
     Returns:
-        bool: True if the signature is valid and matches the computed HMAC, False otherwise.
+        bool: True if the signature is valid, False otherwise.
     """
-    header_signature = flask_request.headers.get('x-hub-signature-256')
-    if not header_signature:
+    if not signature_header:
         return False
 
     try:
-        sha_name, signature = header_signature.split('=', 1)
+        sha_name, signature = signature_header.split("=", 1)
     except ValueError:
         return False
-    if sha_name != 'sha256':
+
+    if sha_name != "sha256":
         return False
 
-    mac = hmac.new(secret.encode('utf-8'), msg=flask_request.data, digestmod=hashlib.sha256)
+    mac = hmac.new(secret.encode("utf-8"), msg=payload, digestmod=hashlib.sha256)
     expected_signature = mac.hexdigest()
     return hmac.compare_digest(expected_signature, signature)
 
 
-
-def load_config():
+def verify_discord_webhook(webhook_url: str) -> bool:
     """
-    Loads the application configuration from the CONFIG_PATH JSON file with caching.
-
-    This function checks if the cached configuration has expired based on the TTL (time-to-live).
-    If the cache is expired or not set, it attempts to read and parse the configuration file.
-    The configuration is then cached for subsequent calls within the TTL window.
-    If the file is not found, the application exits with an error.
-    If the JSON is invalid, an error is printed and the cache is set to None.
-
-    Returns:
-        dict or None: The loaded configuration dictionary if successful, otherwise None.
-    """
-    now = time.monotonic()
-    if now >= _config_cache["expires"]:
-        try:
-            with open("config.json", encoding="utf-8") as f:
-                _config_cache["data"] = json.load(f)
-                _config_cache["expires"] = now + TTL
-        except FileNotFoundError:
-            sys.exit(f"Configuration file 'config.json' not found.")
-        except json.JSONDecodeError as e:
-            print(f"[Config] Invalid JSON: {e}")
-            _config_cache["data"] = None
-    return _config_cache["data"]
-
-def addStarredRepo(github_user_id: int, repository: str):
-    """
-    Adds a record indicating that a GitHub user has starred a specific repository.
-
-    This function inserts a new row into the 'starred_repo' table in the SQLite database
-    for the given GitHub user ID and repository name. If the user has already starred the
-    repository (i.e., the combination of user ID and repository is not unique), the insertion
-    is ignored due to the 'INSERT OR IGNORE' clause.
+    Verifies that a Discord webhook URL is valid and active.
 
     Args:
-        github_user_id (int): The unique ID of the GitHub user who starred the repository.
-        repository (str): The full name of the repository (e.g., 'owner/repo').
+        webhook_url (str): The Discord webhook URL to verify.
 
     Returns:
-        None
+        bool: True if the webhook is valid and active, False otherwise.
     """
     try:
-        db = get_db()
-        db.execute(
-            'INSERT OR IGNORE INTO starred_repo (github_user_id, repository) VALUES (?, ?)',
-            (github_user_id, repository)
+        response = requests.get(webhook_url, timeout=5)
+        return response.status_code == 200
+    except requests.RequestException:
+        return False
+
+
+def extract_repo_info_from_url(repo_url: str) -> tuple[str, str] | None:
+    """
+    Extracts owner and repo name from a GitHub repository URL.
+
+    Args:
+        repo_url (str): The GitHub repository URL.
+
+    Returns:
+        tuple[str, str] | None: A tuple of (owner, repo) or None if invalid.
+    """
+    try:
+        # Remove trailing slashes and .git
+        repo_url = repo_url.rstrip("/").rstrip(".git")
+
+        # Handle various GitHub URL formats
+        if "github.com/" in repo_url:
+            parts = repo_url.split("github.com/")[-1].split("/")
+            if len(parts) >= 2:
+                return parts[0], parts[1]
+    except Exception:  # pylint: disable=broad-exception-caught
+        pass
+
+    return None
+
+
+def fetch_repo_data_from_github(owner: str, repo: str) -> dict | None:
+    """
+    Fetches repository data from GitHub API.
+
+    Args:
+        owner (str): The repository owner.
+        repo (str): The repository name.
+
+    Returns:
+        dict | None: Repository data including repo_id and owner_id, or None if error.
+    """
+    try:
+        response = requests.get(
+            f"https://api.github.com/repos/{owner}/{repo}",
+            headers={"Accept": "application/vnd.github.v3+json"},
+            timeout=5,
         )
-        db.commit()
-    except sqlite3.Error as e:
-        print(f"Database error: {e}")
 
-def send_to_discord(url: str, data: dict) -> bool:
+        if response.status_code == 200:
+            data = response.json()
+            return {
+                "repo_id": data["id"],
+                "repo_full_name": data["full_name"],
+                "owner_id": data["owner"]["id"],
+            }
+    except requests.RequestException:
+        pass
+
+    return None
+
+
+def send_discord_notification(
+    webhook_url: str, event_data: dict, event_type: str
+) -> bool:
     """
-    Sends a notification to a Discord webhook when a new star is added to a GitHub repository.
-
-    This function constructs a Discord embed payload containing information about the user who starred
-    the repository and the repository itself. It then sends this payload as a POST request to the specified
-    Discord webhook URL. If the request is successful, the function returns True. If there is a KeyError
-    (e.g., missing expected fields in the data) or a requests.RequestException (e.g., network error or
-    non-2xx response), the function prints an error message and returns False.
+    Sends a notification to Discord about a new GitHub event.
 
     Args:
-        url (str): The Discord webhook URL to which the notification will be sent.
-        data (dict): The GitHub webhook event payload containing information about the star event.
+        webhook_url (str): The Discord webhook URL.
+        event_data (dict): The GitHub event payload.
+        event_type (str): The event type (star or watch).
 
     Returns:
-        bool: True if the notification was sent successfully, False otherwise.
+        bool: True if successful, False otherwise.
     """
     try:
+        event_names = {"star": "star added", "watch": "watcher added"}
+
+        event_colors = {
+            "star": 0xFFC107,  # Amber for stars
+            "watch": 0x1ABC9C,  # Teal for watches
+        }
+
         payload = {
-            "username": "GitHub Stars Bot",
+            "username": "GitHub Events Bot",
             "avatar_url": "https://cdn-icons-png.flaticon.com/512/616/616489.png",
             "embeds": [
                 {
                     "author": {
-                        "name": data['sender']['login'],
-                        "icon_url": data['sender']['avatar_url']
+                        "name": event_data["sender"]["login"],
+                        "icon_url": event_data["sender"]["avatar_url"],
+                        "url": event_data["sender"]["html_url"],
                     },
-                    "title": f"[{data['repository']['full_name']}] New star added",
-                    "url": data['repository']['html_url'],
-                    "color": 0x1abc9c
+                    "title": (
+                        f"[{event_data['repository']['full_name']}] "
+                        f"New {event_names.get(event_type, event_type)}"
+                    ),
+                    "url": event_data["repository"]["html_url"],
+                    "color": event_colors.get(event_type, 0x1ABC9C),
+                    "footer": {"text": f"GitHub {event_type.capitalize()} Event"},
                 }
-            ]
+            ],
         }
-        response = requests.post(url, json=payload, timeout=5)
+
+        response = requests.post(webhook_url, json=payload, timeout=5)
         response.raise_for_status()
         return True
     except (KeyError, requests.RequestException) as e:
@@ -415,15 +319,460 @@ def send_to_discord(url: str, data: dict) -> bool:
         return False
 
 
+def has_user_triggered_event_before(
+    github_user_id: int, repository_id: int, event_type: str
+) -> bool:
+    """
+    Checks if a user has already triggered a specific event for a repository.
+
+    Args:
+        github_user_id (int): The GitHub user ID.
+        repository_id (int): The GitHub repository ID.
+        event_type (str): The event type (star or watch).
+
+    Returns:
+        bool: True if the user has triggered this event before, False otherwise.
+    """
+    db = get_db()
+    try:
+        cursor = db.execute(
+            "SELECT 1 FROM user_events WHERE github_user_id = ? "
+            "AND repository_id = ? AND event_type = ? LIMIT 1",
+            (github_user_id, repository_id, event_type),
+        )
+        return cursor.fetchone() is not None
+    except sqlite3.Error as e:
+        print(f"Database error: {e}")
+        return False
 
 
+def add_user_event(github_user_id: int, repository_id: int, event_type: str):
+    """
+    Records that a user has triggered an event for a repository.
+
+    Args:
+        github_user_id (int): The GitHub user ID.
+        repository_id (int): The GitHub repository ID.
+        event_type (str): The event type (star or watch).
+    """
+    try:
+        db = get_db()
+        db.execute(
+            "INSERT OR IGNORE INTO user_events "
+            "(github_user_id, repository_id, event_type) VALUES (?, ?, ?)",
+            (github_user_id, repository_id, event_type),
+        )
+        db.commit()
+    except sqlite3.Error as e:
+        print(f"Database error: {e}")
 
 
+def get_repository_by_id(repo_id: int) -> dict | None:
+    """
+    Retrieves repository configuration by repository ID.
+
+    Args:
+        repo_id (int): The GitHub repository ID.
+
+    Returns:
+        dict | None: Repository configuration or None if not found.
+    """
+    db = get_db()
+    try:
+        cursor = db.execute(
+            "SELECT * FROM repositories WHERE repo_id = ? LIMIT 1", (repo_id,)
+        )
+        row = cursor.fetchone()
+        return dict(row) if row else None
+    except sqlite3.Error as e:
+        print(f"Database error: {e}")
+        return None
 
 
+# ============================================================================
+# Web Routes
+# ============================================================================
 
 
+@app.route("/", methods=["GET"])
+def index():
+    """
+    Serves the frontend HTML page.
+    """
+    try:
+        return render_template("index.html")
+    except Exception:  # pylint: disable=broad-exception-caught
+        return jsonify(
+            {
+                "app": APP_NAME,
+                "version": APP_VERSION,
+                "status": "running",
+                "message": "Frontend not available. Use API endpoints.",
+            }
+        )
 
 
-if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=5000, debug=True)
+@app.route("/webhook", methods=["POST"])
+def handle_webhook():  # pylint: disable=too-many-return-statements,too-many-branches
+    """
+    Handles incoming GitHub webhook events (star, watch, ping).
+
+    This endpoint:
+    - Handles GitHub's ping event for webhook verification
+    - Validates webhook signatures
+    - Processes star and watch events
+    - Sends Discord notifications for first-time events
+    """
+    # Handle ping event from GitHub webhook setup
+    event_type = request.headers.get("x-github-event")
+
+    if event_type == "ping":
+        return jsonify({"message": "Webhook received and verified"}), 200
+
+    # Validate JSON payload
+    if not request.is_json:
+        return jsonify({"error": "Expected application/json"}), 400
+
+    data = request.get_json(silent=True)
+    if not data:
+        return jsonify({"error": "Malformed or empty JSON"}), 400
+
+    # Extract repository information
+    repo_id = data.get("repository", {}).get("id")
+    if not repo_id:
+        return jsonify({"error": "Missing repository.id"}), 400
+
+    # Get repository configuration
+    repo_config = get_repository_by_id(repo_id)
+    if not repo_config:
+        return jsonify({"error": "Repository not configured"}), 404
+
+    # Validate webhook signature
+    signature_header = request.headers.get("x-hub-signature-256")
+    if not signature_header:
+        return jsonify({"error": "Missing signature"}), 403
+
+    # Decrypt secret and validate signature
+    try:
+        secret = decrypt_secret(repo_config["secret_encrypted"])
+        if not verify_github_signature(secret, signature_header, request.data):
+            return jsonify({"error": "Invalid signature"}), 403
+    except Exception as e:  # pylint: disable=broad-exception-caught
+        print(f"Error validating signature: {e}")
+        return jsonify({"error": "Signature validation failed"}), 403
+
+    # Check if event type is supported
+    if event_type not in ["star", "watch"]:
+        return jsonify({"error": "Unsupported event type"}), 422
+
+    # Check if this event type is enabled for this repository
+    enabled_events = repo_config["enabled_events"].split(",")
+    if event_type not in enabled_events:
+        return (
+            jsonify(
+                {"message": f"{event_type} events not enabled for this repository"}
+            ),
+            200,
+        )
+
+    # Check action
+    action = data.get("action")
+    if action not in ("created", "started"):  # 'started' is for watch events
+        return jsonify({"message": f"Action '{action}' not processed"}), 200
+
+    # Get sender information
+    sender_id = data.get("sender", {}).get("id")
+    if sender_id is None:
+        return jsonify({"error": "Missing sender ID"}), 400
+
+    # Check if user has already triggered this event
+    if not has_user_triggered_event_before(sender_id, repo_id, event_type):
+        if send_discord_notification(
+            repo_config["discord_webhook_url"], data, event_type
+        ):
+            add_user_event(sender_id, repo_id, event_type)
+            return jsonify({"message": "Event processed and notification sent"}), 200
+        return jsonify({"error": "Failed to send Discord notification"}), 500
+
+    return jsonify({"message": "Event already processed for this user"}), 200
+
+
+# ============================================================================
+# API Routes for Frontend
+# ============================================================================
+
+
+@app.route("/api/generate-secret", methods=["GET"])
+def api_generate_secret():
+    """
+    Generates a cryptographically secure random secret.
+    """
+    secret = secrets.token_urlsafe(32)
+    return jsonify({"secret": secret}), 200
+
+
+@app.route("/api/repositories", methods=["POST"])
+def api_add_repository():  # pylint: disable=too-many-return-statements
+    """
+    Adds a new repository configuration.
+
+    Expected JSON payload:
+    {
+        "repo_url": "https://github.com/owner/repo",
+        "secret": "webhook_secret",
+        "discord_webhook_url": "https://discord.com/api/webhooks/...",
+        "enabled_events": "star,watch"
+    }
+    """
+    data = request.get_json(silent=True)
+    if not data:
+        return jsonify({"error": "Missing JSON payload"}), 400
+
+    repo_url = data.get("repo_url", "").strip()
+    secret = data.get("secret", "").strip()
+    discord_webhook_url = data.get("discord_webhook_url", "").strip()
+    enabled_events = data.get("enabled_events", "").strip()
+
+    # Validate inputs
+    if not all([repo_url, secret, discord_webhook_url, enabled_events]):
+        return jsonify({"error": "Missing required fields"}), 400
+
+    # Validate enabled events
+    events = enabled_events.split(",")
+    valid_events = {"star", "watch"}
+    if not all(event in valid_events for event in events):
+        return (
+            jsonify({"error": "Invalid event types. Must be 'star' and/or 'watch'"}),
+            400,
+        )
+
+    # Extract owner and repo from URL
+    repo_info = extract_repo_info_from_url(repo_url)
+    if not repo_info:
+        return jsonify({"error": "Invalid GitHub repository URL"}), 400
+
+    owner, repo_name = repo_info
+
+    # Fetch repository data from GitHub
+    github_data = fetch_repo_data_from_github(owner, repo_name)
+    if not github_data:
+        return (
+            jsonify(
+                {
+                    "error": "Could not fetch repository data from GitHub. Please check the URL."
+                }
+            ),
+            400,
+        )
+
+    # Verify Discord webhook
+    if not verify_discord_webhook(discord_webhook_url):
+        return jsonify({"error": "Discord webhook URL is invalid or inactive"}), 400
+
+    # Encrypt the secret
+    secret_encrypted = encrypt_secret(secret)
+
+    # Store in database
+    db = get_db()
+    try:
+        db.execute(
+            """INSERT INTO repositories (repo_id, repo_full_name, owner_id, 
+            secret_encrypted, discord_webhook_url, enabled_events)
+            VALUES (?, ?, ?, ?, ?, ?)""",
+            (
+                github_data["repo_id"],
+                github_data["repo_full_name"],
+                github_data["owner_id"],
+                secret_encrypted,
+                discord_webhook_url,
+                enabled_events,
+            ),
+        )
+        db.commit()
+        return (
+            jsonify(
+                {
+                    "message": "Repository added successfully",
+                    "repo_full_name": github_data["repo_full_name"],
+                }
+            ),
+            201,
+        )
+    except sqlite3.IntegrityError:
+        return jsonify({"error": "Repository already exists in the database"}), 409
+    except sqlite3.Error as e:
+        return jsonify({"error": f"Database error: {e}"}), 500
+
+
+@app.route("/api/repositories/verify", methods=["POST"])
+def api_verify_repository():  # pylint: disable=too-many-return-statements
+    """
+    Verifies repository credentials for editing/deleting.
+
+    Expected JSON payload:
+    {
+        "repo_url": "https://github.com/owner/repo",
+        "secret": "webhook_secret",
+        "discord_webhook_url": "https://discord.com/api/webhooks/..."
+    }
+    """
+    data = request.get_json(silent=True)
+    if not data:
+        return jsonify({"error": "Missing JSON payload"}), 400
+
+    repo_url = data.get("repo_url", "").strip()
+    secret = data.get("secret", "").strip()
+    discord_webhook_url = data.get("discord_webhook_url", "").strip()
+
+    if not all([repo_url, secret, discord_webhook_url]):
+        return jsonify({"error": "Missing required fields"}), 400
+
+    # Extract owner and repo from URL
+    repo_info = extract_repo_info_from_url(repo_url)
+    if not repo_info:
+        return jsonify({"error": "Invalid GitHub repository URL"}), 400
+
+    owner, repo_name = repo_info
+
+    # Fetch repository data from GitHub
+    github_data = fetch_repo_data_from_github(owner, repo_name)
+    if not github_data:
+        return jsonify({"error": "Could not fetch repository data from GitHub"}), 400
+
+    # Get repository from database
+    repo_config = get_repository_by_id(github_data["repo_id"])
+    if not repo_config:
+        return jsonify({"error": "Repository not found in database"}), 404
+
+    # Verify secret and webhook URL
+    if not verify_secret(secret, repo_config["secret_encrypted"]):
+        return jsonify({"error": "Invalid secret"}), 403
+
+    if repo_config["discord_webhook_url"] != discord_webhook_url:
+        return jsonify({"error": "Invalid Discord webhook URL"}), 403
+
+    return (
+        jsonify(
+            {
+                "message": "Repository verified",
+                "repo_id": repo_config["repo_id"],
+                "repo_full_name": repo_config["repo_full_name"],
+                "enabled_events": repo_config["enabled_events"],
+            }
+        ),
+        200,
+    )
+
+
+@app.route("/api/repositories/<int:repo_id>", methods=["PUT"])
+def api_update_repository(repo_id):  # pylint: disable=too-many-return-statements
+    """
+    Updates repository configuration.
+
+    Expected JSON payload:
+    {
+        "old_secret": "current_secret",
+        "new_secret": "new_secret" (optional),
+        "discord_webhook_url": "new_webhook_url" (optional),
+        "enabled_events": "star,watch"
+    }
+    """
+    data = request.get_json(silent=True)
+    if not data:
+        return jsonify({"error": "Missing JSON payload"}), 400
+
+    old_secret = data.get("old_secret", "").strip()
+    enabled_events = data.get("enabled_events", "").strip()
+
+    if not old_secret or not enabled_events:
+        return jsonify({"error": "Missing required fields"}), 400
+
+    # Validate enabled events
+    events = enabled_events.split(",")
+    valid_events = {"star", "watch"}
+    if not all(event in valid_events for event in events):
+        return jsonify({"error": "Invalid event types"}), 400
+
+    # Get repository from database
+    repo_config = get_repository_by_id(repo_id)
+    if not repo_config:
+        return jsonify({"error": "Repository not found"}), 404
+
+    # Verify old secret
+    if not verify_secret(old_secret, repo_config["secret_encrypted"]):
+        return jsonify({"error": "Invalid secret"}), 403
+
+    # Prepare updates
+    updates = []
+    params = []
+
+    new_secret = data.get("new_secret", "").strip()
+    if new_secret:
+        updates.append("secret_encrypted = ?")
+        params.append(encrypt_secret(new_secret))
+
+    discord_webhook_url = data.get("discord_webhook_url", "").strip()
+    if discord_webhook_url:
+        if not verify_discord_webhook(discord_webhook_url):
+            return jsonify({"error": "Discord webhook URL is invalid or inactive"}), 400
+        updates.append("discord_webhook_url = ?")
+        params.append(discord_webhook_url)
+
+    updates.append("enabled_events = ?")
+    params.append(enabled_events)
+
+    updates.append("updated_at = CURRENT_TIMESTAMP")
+
+    params.append(repo_id)
+
+    # Update database
+    db = get_db()
+    try:
+        db.execute(
+            f"UPDATE repositories SET {', '.join(updates)} WHERE repo_id = ?", params
+        )
+        db.commit()
+        return jsonify({"message": "Repository updated successfully"}), 200
+    except sqlite3.Error as e:
+        return jsonify({"error": f"Database error: {e}"}), 500
+
+
+@app.route("/api/repositories/<int:repo_id>", methods=["DELETE"])
+def api_delete_repository(repo_id):
+    """
+    Deletes a repository configuration.
+
+    Expected JSON payload:
+    {
+        "secret": "webhook_secret"
+    }
+    """
+    data = request.get_json(silent=True)
+    if not data:
+        return jsonify({"error": "Missing JSON payload"}), 400
+
+    secret = data.get("secret", "").strip()
+    if not secret:
+        return jsonify({"error": "Missing secret"}), 400
+
+    # Get repository from database
+    repo_config = get_repository_by_id(repo_id)
+    if not repo_config:
+        return jsonify({"error": "Repository not found"}), 404
+
+    # Verify secret
+    if not verify_secret(secret, repo_config["secret_encrypted"]):
+        return jsonify({"error": "Invalid secret"}), 403
+
+    # Delete from database
+    db = get_db()
+    try:
+        db.execute("DELETE FROM repositories WHERE repo_id = ?", (repo_id,))
+        db.commit()
+        return jsonify({"message": "Repository deleted successfully"}), 200
+    except sqlite3.Error as e:
+        return jsonify({"error": f"Database error: {e}"}), 500
+
+
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=5000, debug=True)

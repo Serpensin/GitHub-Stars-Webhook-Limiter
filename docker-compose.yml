@@ -13,7 +13,6 @@ services:
       SENTRY_DSN: SENTRY_DSN_FOR_ERROR_REPORTING
     image: ghcr.io/serpensin/github-stars-webhook-limiter
     volumes:
-      - /root/config.json:/app/config.json:ro
       - data:/app/GitHub_Stars_Limiter
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:5000"]
