@@ -11,9 +11,13 @@ services:
     restart: unless-stopped
     environment:
       SENTRY_DSN: SENTRY_DSN_FOR_ERROR_REPORTING
+      LOG_LEVEL: INFO  # Options: DEBUG, INFO, WARNING, ERROR, CRITICAL
+      ENCRYPTION_KEY: your-encryption-key-here  # REQUIRED: Generate with Fernet.generate_key()
+      ADMIN_PASSWORD_HASH: your-argon2-hash-here  # REQUIRED: Hash your admin password with argon2
+      FLASK_SECRET_KEY: your-flask-secret-key-here  # REQUIRED: Generate with secrets.token_hex(32)
     image: ghcr.io/serpensin/github-stars-webhook-limiter
     volumes:
-      - data:/app/GitHub_Stars_Limiter
+      - data:/app/GitHub_Events_Limiter  # Persists database and logs across container restarts
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:5000"]
       interval: 30s

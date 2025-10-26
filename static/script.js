@@ -19,16 +19,31 @@ function showTab(tabName) {
 // Generate random secret
 async function generateSecret(inputId) {
     try {
-        const response = await fetch('/api/generate-secret');
+        const response = await fetch('/api/generate-secret', {
+            headers: {
+                'X-CSRF-Token': window.CSRF_TOKEN,
+                'X-Request-Time': Math.floor(Date.now() / 1000).toString(),
+                'X-Request-Nonce': generateNonce()
+            }
+        });
      const data = await response.json();
-        
+
         if (data.secret) {
          document.getElementById(inputId).value = data.secret;
          showStatus('Secret generated successfully! Don\'t forget to copy it.', 'success');
+        } else if (data.new_token) {
+            // Token expired, update and retry
+            window.CSRF_TOKEN = data.new_token;
+            return generateSecret(inputId);
         }
     } catch (error) {
         showStatus('Failed to generate secret: ' + error.message, 'error');
     }
+}
+
+// Generate a unique nonce for each request (prevents replay attacks)
+function generateNonce() {
+    return Math.random().toString(36).substring(2) + Date.now().toString(36);
 }
 
 // Copy to clipboard
@@ -86,7 +101,10 @@ document.getElementById('add-form').addEventListener('submit', async (e) => {
         const response = await fetch('/api/repositories', {
    method: 'POST',
          headers: {
-       'Content-Type': 'application/json'
+       'Content-Type': 'application/json',
+                'X-CSRF-Token': window.CSRF_TOKEN,
+                'X-Request-Time': Math.floor(Date.now() / 1000).toString(),
+                'X-Request-Nonce': generateNonce()
             },
             body: JSON.stringify({
         repo_url: repoUrl,
@@ -99,15 +117,15 @@ document.getElementById('add-form').addEventListener('submit', async (e) => {
         const data = await response.json();
      
         if (response.ok) {
-         showStatus(`? ${data.message} - ${data.repo_full_name}`, 'success');
+         showStatus(`✅ ${data.message} - ${data.repo_full_name}`, 'success');
        document.getElementById('add-form').reset();
 // Re-check default events
             document.querySelectorAll('input[name="events"]').forEach(cb => cb.checked = true);
 } else {
-        showStatus(`? ${data.error}`, 'error');
+        showStatus(`❌ ${data.error}`, 'error');
         }
     } catch (error) {
- showStatus(`? Network error: ${error.message}`, 'error');
+ showStatus(`❌ Network error: ${error.message}`, 'error');
     }
 });
 
@@ -125,7 +143,10 @@ const secret = document.getElementById('verify-secret').value.trim();
       const response = await fetch('/api/repositories/verify', {
             method: 'POST',
        headers: {
-     'Content-Type': 'application/json'
+     'Content-Type': 'application/json',
+                'X-CSRF-Token': window.CSRF_TOKEN,
+                'X-Request-Time': Math.floor(Date.now() / 1000).toString(),
+                'X-Request-Nonce': generateNonce()
      },
             body: JSON.stringify({
          repo_url: repoUrl,
@@ -137,7 +158,7 @@ discord_webhook_url: discordWebhook
         const data = await response.json();
 
    if (response.ok) {
-            showStatus(`? Repository verified: ${data.repo_full_name}`, 'success');
+            showStatus(`✅ Repository verified: ${data.repo_full_name}`, 'success');
             
       // Populate edit form
             document.getElementById('edit-repo-id').value = data.repo_id;
@@ -153,10 +174,10 @@ document.getElementById('edit-event-watch').checked = events.includes('watch');
             document.getElementById('edit-section').style.display = 'block';
        document.getElementById('verify-form').style.display = 'none';
         } else {
-            showStatus(`? ${data.error}`, 'error');
+            showStatus(`❌ ${data.error}`, 'error');
  }
     } catch (error) {
-        showStatus(`? Network error: ${error.message}`, 'error');
+        showStatus(`❌ Network error: ${error.message}`, 'error');
     }
 });
 
@@ -192,7 +213,10 @@ document.getElementById('edit-form').addEventListener('submit', async (e) => {
         const response = await fetch(`/api/repositories/${repoId}`, {
             method: 'PUT',
     headers: {
-     'Content-Type': 'application/json'
+     'Content-Type': 'application/json',
+                'X-CSRF-Token': window.CSRF_TOKEN,
+                'X-Request-Time': Math.floor(Date.now() / 1000).toString(),
+                'X-Request-Nonce': generateNonce()
      },
   body: JSON.stringify(payload)
         });
@@ -200,7 +224,7 @@ document.getElementById('edit-form').addEventListener('submit', async (e) => {
         const data = await response.json();
         
         if (response.ok) {
-   showStatus(`? ${data.message}`, 'success');
+   showStatus(`✅ ${data.message}`, 'success');
        
             // Update old secret if new secret was set
    if (newSecret) {
@@ -211,10 +235,10 @@ document.getElementById('edit-form').addEventListener('submit', async (e) => {
        document.getElementById('edit-new-secret').value = '';
     document.getElementById('edit-discord-webhook').value = '';
         } else {
-            showStatus(`? ${data.error}`, 'error');
+            showStatus(`❌ ${data.error}`, 'error');
       }
     } catch (error) {
-        showStatus(`? Network error: ${error.message}`, 'error');
+        showStatus(`❌ Network error: ${error.message}`, 'error');
     }
 });
 
@@ -233,27 +257,30 @@ async function deleteRepository() {
      const response = await fetch(`/api/repositories/${repoId}`, {
             method: 'DELETE',
        headers: {
-      'Content-Type': 'application/json'
+      'Content-Type': 'application/json',
+                'X-CSRF-Token': window.CSRF_TOKEN,
+                'X-Request-Time': Math.floor(Date.now() / 1000).toString(),
+                'X-Request-Nonce': generateNonce()
   },
   body: JSON.stringify({
    secret: secret
             })
         });
         
-      const data = await response.json();
+        const data = await response.json();
     
         if (response.ok) {
-  showStatus(`? ${data.message}`, 'success');
+  showStatus(`✅ ${data.message}`, 'success');
    
             // Reset forms
  document.getElementById('verify-form').reset();
      document.getElementById('verify-form').style.display = 'block';
   document.getElementById('edit-section').style.display = 'none';
         } else {
-            showStatus(`? ${data.error}`, 'error');
+            showStatus(`❌ ${data.error}`, 'error');
         }
     } catch (error) {
-        showStatus(`? Network error: ${error.message}`, 'error');
+        showStatus(`❌ Network error: ${error.message}`, 'error');
     }
 }
 

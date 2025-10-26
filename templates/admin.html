@@ -1,0 +1,230 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Admin Panel - GitHub Events Limiter</title>
+    <link rel="stylesheet" href="/static/style.css?v=2.3.0">
+    <link rel="stylesheet" href="/static/admin.css?v=2.3.0">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>🔐 Admin Panel</h1>
+            <p>Manage API Keys for GitHub Events Limiter</p>
+            <div style="text-align: right; margin-top: 10px;">
+                <a href="/" style="font-size: 0.9em;">← Back to Repository Management</a>
+            </div>
+        </header>
+
+        <!-- Timeout Banner (shown when session expires) -->
+        <div id="timeout-banner" class="timeout-banner" style="display: none;">
+            <span>⏱️ Your session has expired. Please log in again.</span>
+        </div>
+
+        <!-- Login Form (shown when not authenticated) -->
+        <div id="login-section" class="card">
+            <h2>Admin Login</h2>
+            <form id="login-form">
+                <div class="form-group">
+                    <label for="admin-password">Password</label>
+                    <input type="password" id="admin-password" placeholder="Enter admin password" required>
+                </div>
+                <button type="submit" class="btn btn-primary">Login</button>
+            </form>
+            <div id="login-error" class="error-message" style="display: none;"></div>
+        </div>
+
+        <!-- Admin Dashboard (shown when authenticated) -->
+        <div id="admin-dashboard" style="display: none;">
+            <div class="admin-header">
+                <h2>Admin Panel</h2>
+                <div class="admin-controls">
+                    <div id="session-timer" class="session-timer">
+                        Session expires in: <span id="timer-display">5:00</span>
+                    </div>
+                    <button id="logout-btn" class="btn btn-secondary">Logout</button>
+                </div>
+            </div>
+
+            <!-- Tab Navigation -->
+            <div class="tab-navigation">
+                <button class="tab-button active" onclick="switchTab('api-keys')">🔑 API Keys</button>
+                <button class="tab-button" onclick="switchTab('logs')">📋 Logs</button>
+            </div>
+
+            <!-- API Keys Tab -->
+            <div id="api-keys-tab" class="tab-content active">
+                <!-- Add New API Key -->
+                <div class="card">
+                    <h3>Generate New API Key</h3>
+                    <form id="add-key-form">
+                        <div class="form-group">
+                            <label for="key-name">Key Name/Description</label>
+                            <input type="text" id="key-name" placeholder="e.g., prod server" required maxlength="16" pattern="[A-Za-z0-9 _\-]+">
+                            <small>Max 16 characters. Letters, numbers, spaces, hyphens, and underscores only</small>
+                        </div>
+                        
+                        <div class="form-group">
+                            <label>
+                                <input type="checkbox" id="is-admin-key" onchange="toggleAdminKeyOptions()">
+                                Admin Key (Full Access)
+                            </label>
+                            <small>Admin keys have unrestricted access to all API and admin routes, ignoring permissions and rate limits.</small>
+                        </div>
+                        
+                        <div id="regular-key-options">
+                            <div class="form-group">
+                                <label>Endpoint Permissions</label>
+                                <div class="permissions-inline">
+                                    <label class="permission-checkbox" title="Allow generating webhook secrets for repositories">
+                                        <input type="checkbox" id="perm-generate-secret">
+                                        <span>Generate Secret</span>
+                                    </label>
+                                    <label class="permission-checkbox" title="Allow adding new repositories to the limiter">
+                                        <input type="checkbox" id="perm-repositories-add">
+                                        <span>Add Repository</span>
+                                    </label>
+                                    <label class="permission-checkbox" title="Allow verifying repository webhook configurations">
+                                        <input type="checkbox" id="perm-repositories-verify">
+                                        <span>Verify Repository</span>
+                                    </label>
+                                    <label class="permission-checkbox" title="Allow updating repository settings and configurations">
+                                        <input type="checkbox" id="perm-repositories-update">
+                                        <span>Update Repository</span>
+                                    </label>
+                                    <label class="permission-checkbox" title="Allow deleting repositories from the limiter">
+                                        <input type="checkbox" id="perm-repositories-delete">
+                                        <span>Delete Repository</span>
+                                    </label>
+                                </div>
+                                <small>Select permissions for each API endpoint (hover for details)</small>
+                            </div>
+                            
+                            <div class="form-group">
+                                <label for="key-rate-limit">Rate Limit (requests/hour)</label>
+                                <input type="number" id="key-rate-limit" value="100" min="0" max="1000" required>
+                                <small>Maximum requests per hour (0 = unlimited, 1-1000)</small>
+                            </div>
+                        </div>
+                        <button type="submit" class="btn btn-primary" id="generate-key-btn" disabled>Generate API Key</button>
+                    </form>
+                </div>
+
+                <!-- Generated Key Display -->
+                <div id="generated-key-section" class="card" style="display: none;">
+                    <h3>⚠️ Save Your API Key</h3>
+                    <p class="warning-text">This key will only be shown once. Store it securely!</p>
+                    <div class="key-display">
+                        <code id="generated-key"></code>
+                        <button type="button" class="btn btn-secondary" onclick="copyGeneratedKey(event)">Copy</button>
+                    </div>
+                    <p class="info-text">Use this key in the Authorization header: <code>Authorization: Bearer YOUR_API_KEY</code></p>
+                </div>
+
+                <!-- API Keys List -->
+                <div class="card">
+                    <div class="keys-header">
+                        <h3>API Keys</h3>
+                        <div class="bulk-actions" id="bulk-actions" style="display: none;">
+                            <span id="selected-count">0 selected</span>
+                            <button class="btn btn-small btn-success" onclick="bulkAction('activate')">Activate Selected</button>
+                            <button class="btn btn-small btn-warning" onclick="bulkAction('deactivate')">Deactivate Selected</button>
+                            <button class="btn btn-small btn-danger" onclick="bulkAction('delete')">Delete Selected</button>
+                        </div>
+                    </div>
+                    <div id="keys-list">
+                        <p class="loading">Loading API keys...</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Logs Tab -->
+            <div id="logs-tab" class="tab-content">
+                <div class="card">
+                    <div class="logs-header">
+                        <h3>Application Logs</h3>
+                        <div class="logs-controls">
+                            <select id="log-file-selector" onchange="changeLogFile()">
+                                <option value="">Loading log files...</option>
+                            </select>
+                            <select id="log-level-filter" onchange="filterLogs()">
+                                <option value="all">All Levels</option>
+                                <option value="DEBUG">Debug</option>
+                                <option value="INFO">Info</option>
+                                <option value="WARNING">Warning</option>
+                                <option value="ERROR">Error</option>
+                                <option value="CRITICAL">Critical</option>
+                            </select>
+                            <select id="log-logger-filter" onchange="filterLogs()">
+                                <option value="all">All Loggers</option>
+                            </select>
+                            <input type="text" id="log-search" placeholder="Search logs..." oninput="filterLogs()">
+                            <div class="live-view-control">
+                                <input type="checkbox" id="live-view-toggle" onchange="toggleLiveView()" checked>
+                                <label for="live-view-toggle" title="Auto-refresh logs every 3 seconds">Live View</label>
+                            </div>
+                            <button class="btn btn-small btn-secondary" onclick="loadLogs()">🔄 Refresh</button>
+                            <button class="btn btn-small btn-primary" onclick="downloadLogs()">💾 Download</button>
+                        </div>
+                    </div>
+                    <div class="logs-container">
+                        <div id="logs-content">
+                            <p class="loading">Loading logs...</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Edit Key Modal -->
+        <div id="edit-key-modal" class="modal">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h3>Edit API Key</h3>
+                    <span class="close" onclick="closeEditModal()">&times;</span>
+                </div>
+                <form id="edit-key-form">
+                    <input type="hidden" id="edit-key-id">
+                    <div class="form-group">
+                        <label>Endpoint Permissions</label>
+                        <div class="permissions-inline">
+                            <label class="permission-checkbox" title="Allow generating webhook secrets for repositories">
+                                <input type="checkbox" id="edit-perm-generate-secret">
+                                <span>Generate Secret</span>
+                            </label>
+                            <label class="permission-checkbox" title="Allow adding new repositories to the limiter">
+                                <input type="checkbox" id="edit-perm-repositories-add">
+                                <span>Add Repository</span>
+                            </label>
+                            <label class="permission-checkbox" title="Allow verifying repository webhook configurations">
+                                <input type="checkbox" id="edit-perm-repositories-verify">
+                                <span>Verify Repository</span>
+                            </label>
+                            <label class="permission-checkbox" title="Allow updating repository settings and configurations">
+                                <input type="checkbox" id="edit-perm-repositories-update">
+                                <span>Update Repository</span>
+                            </label>
+                            <label class="permission-checkbox" title="Allow deleting repositories from the limiter">
+                                <input type="checkbox" id="edit-perm-repositories-delete">
+                                <span>Delete Repository</span>
+                            </label>
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label for="edit-key-rate-limit">Rate Limit (requests/hour)</label>
+                        <input type="number" id="edit-key-rate-limit" min="0" max="1000" required>
+                        <small>0 = unlimited</small>
+                    </div>
+                    <div style="display: flex; gap: 10px; margin-top: 20px;">
+                        <button type="submit" class="btn btn-primary">Save Changes</button>
+                        <button type="button" class="btn btn-secondary" onclick="closeEditModal()">Cancel</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <script src="/static/admin.js?v=2.3.0"></script>
+</body>
+</html>

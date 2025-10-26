@@ -5,12 +5,20 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>GitHub Events Limiter - Repository Management</title>
     <link rel="stylesheet" href="/static/style.css">
+    <script>
+        // CSRF token for API authentication - session-specific
+        // Even if someone sees this token, they can't use it from a different session
+        window.CSRF_TOKEN = "{{ csrf_token }}";
+    </script>
 </head>
 <body>
     <div class="container">
      <header>
             <h1>&#128276; GitHub Events Limiter</h1>
             <p>Manage your GitHub webhook notifications to Discord</p>
+            <div style="text-align: right; margin-top: 10px;">
+                <a href="/admin" style="color: #666; text-decoration: none; font-size: 0.9em;">🔐 Admin Panel</a>
+            </div>
     </header>
 
         <div class="tabs">

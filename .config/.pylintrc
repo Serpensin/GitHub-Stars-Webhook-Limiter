@@ -1,0 +1,11 @@
+[FORMAT]
+max-line-length=100
+
+[MESSAGES CONTROL]
+disable=
+    logging-fstring-interpolation,
+    line-too-long,
+    too-many-lines
+
+[MASTER]
+ignore=env,.venv,venv,GitHub_Events_Limiter

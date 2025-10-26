@@ -1,4 +1,4 @@
-﻿# GitHub Events Limiter
+# GitHub Events Limiter
 
 A Flask application that listens for GitHub webhook events (star, watch), validates them,
 and sends notifications to Discord webhooks if a user performs an action for the first time.
@@ -12,6 +12,8 @@ It uses SQLite for persistence and supports Sentry for error monitoring.
 - ✅ **Deduplication**: Prevents duplicate notifications for the same user/repo/event combination
 - ✅ **Discord Notifications**: Sends formatted embeds to Discord webhooks
 - ✅ **Web Interface**: Easy-to-use front-end for repository management
+- ✅ **API Key Authentication**: Secure programmatic access with Argon2id-hashed API keys
+- ✅ **Admin Panel**: Password-protected interface for API key management
 - ✅ **SQLite Database**: All configuration stored in SQLite (no config files needed)
 - ✅ **Repository ID Tracking**: Uses GitHub repository and owner IDs for resilience against name changes
 - ✅ **Webhook Verification**: Responds to GitHub's ping event for webhook verification
@@ -22,6 +24,9 @@ It uses SQLite for persistence and supports Sentry for error monitoring.
 
 - 🎉 **Watch Event Support**: Now tracks first-time watchers in addition to stars
 - 🎉 **Web UI**: Manage repositories through a beautiful web interface
+- 🎉 **API Key System**: Generate and manage API keys for programmatic access
+- 🎉 **Admin Panel**: Secure admin interface with Argon2id password hashing (like Vaultwarden)
+- 🎉 **Protected API Routes**: Web interface or API key required - no public API access
 - 🎉 **No Config Files**: All configuration moved to SQLite database with encrypted secrets
 - 🎉 **Secure Secret Generation**: Built-in secure random secret generator
 - 🎉 **Discord Webhook Verification**: Validates Discord webhooks before saving
@@ -35,11 +40,22 @@ It uses SQLite for persistence and supports Sentry for error monitoring.
 
 #### Using Docker (Recommended)
 
+**IMPORTANT:** Docker's `--env-file` does not properly handle `$` symbols in Argon2 hashes. Use one of these methods:
+
+**Option 1: Using docker-compose (Recommended)**
+```bash
+# Edit docker-compose.yml with your environment variables
+docker-compose up -d
+```
+
+**Option 2: Using -e flags**
 ```bash
 docker build -t github-events-limiter .
 docker run -d -p 5000:5000 \
   -v $(pwd)/GitHub_Events_Limiter:/app/GitHub_Events_Limiter \
   -e ENCRYPTION_KEY="your-encryption-key" \
+  -e ADMIN_PASSWORD_HASH='$argon2id$v=19$m=65536,t=3,p=4$...' \
+  -e FLASK_SECRET_KEY="your-flask-secret" \
   -e SENTRY_DSN="your-sentry-dsn" \
   github-events-limiter
 ```
@@ -51,18 +67,42 @@ pip install -r requirements.txt
 python main.py
 ```
 
-On first run, if no `ENCRYPTION_KEY` is set, the application will generate one and print it to console. **Save this key to your `.env` file!**
+**Important:** The application will NOT start without valid environment variables. See the next section for setup.
 
 ### 2. Environment Variables
 
-Create a `.env` file:
+Create a `.env` file with **ALL required secrets**:
 
 ```env
-ENCRYPTION_KEY=your-encryption-key-here  # REQUIRED: Generated on first run or use Fernet.generate_key()
-SENTRY_DSN=your-sentry-dsn-here          # Optional: For error monitoring
+ENCRYPTION_KEY=your-encryption-key-here      # REQUIRED: Fernet key for encrypting secrets
+ADMIN_PASSWORD_HASH=your-argon2-hash-here    # REQUIRED: Admin password hash (must be valid Argon2)
+FLASK_SECRET_KEY=your-flask-secret-key-here  # REQUIRED: Flask session secret
+SENTRY_DSN=your-sentry-dsn-here              # Optional: For error monitoring
 ```
 
-**Important**: The `ENCRYPTION_KEY` is required to decrypt secrets stored in the database. Keep it secure and backed up!
+**⚠️ IMPORTANT:** Do NOT use the placeholder values above! The application validates that:
+1. All required variables are set (not empty)
+2. Values are NOT placeholders from `.env.example` or `docker-compose.yml`
+3. `ADMIN_PASSWORD_HASH` is a valid Argon2 hash format
+
+If validation fails, the application will exit immediately with a detailed error message.
+
+
+**Generate All Required Secrets:**
+
+```bash
+python generate_required_secrets.py
+```
+
+This will generate all three required secrets at once. Copy the output to your `.env` file or `docker-compose.yml`.
+
+**Important Notes:**
+- All three secrets (ENCRYPTION_KEY, ADMIN_PASSWORD_HASH, FLASK_SECRET_KEY) are **REQUIRED**
+- Empty values will cause validation to fail
+- Run `python generate_required_secrets.py --check` to validate your `.env` file
+- The application will **exit immediately** if any secret is missing
+- Keep these secrets secure and backed up!
+- Use different secrets for development and production
 
 ### 3. Add Repository via Web Interface
 
@@ -96,16 +136,99 @@ Star or watch your repository to verify Discord notifications work!
 
 ### Web Interface
 - `GET /` - Main web interface for repository management
+- `GET /admin` - Admin panel for API key management (password protected)
 
 ### Webhook
 - `POST /webhook` - GitHub webhook endpoint (handles star, watch, ping events)
 
-### Repository Management API
+### Repository Management API (Protected)
+**Authentication Required**: These endpoints require either:
+- Same-origin Referer header (automatic when using the web interface), OR
+- API key via `Authorization: Bearer <api_key>` header
+
 - `POST /api/repositories` - Add new repository configuration
 - `POST /api/repositories/verify` - Verify repository credentials for editing
 - `PUT /api/repositories/<repo_id>` - Update repository configuration
 - `DELETE /api/repositories/<repo_id>` - Delete repository configuration
 - `GET /api/generate-secret` - Generate secure random secret (44 chars)
+
+### Admin API (Password Protected)
+**Authentication Required**: Session-based authentication via admin panel login
+
+- `POST /admin/api/login` - Authenticate with admin password
+- `POST /admin/api/logout` - End admin session
+- `GET /admin/api/keys` - List all API keys
+- `POST /admin/api/keys` - Create new API key
+- `DELETE /admin/api/keys/<key_id>` - Delete API key
+- `POST /admin/api/keys/<key_id>/toggle` - Activate/deactivate API key
+
+## API Authentication
+
+### Web Interface Access
+The web interface at `/` can access all repository management APIs directly without additional authentication. Access is restricted to same-origin requests via Referer header validation.
+
+### Programmatic Access
+For programmatic access (scripts, CI/CD, external tools), you need an API key:
+
+1. **Access Admin Panel**: Navigate to `/admin` and log in with your admin password
+2. **Generate API Key**: Create a new API key with a descriptive name
+3. **Save Securely**: The key is only shown once - store it securely!
+4. **Use in Requests**: Include the key in the Authorization header:
+
+```bash
+curl -X POST https://your-domain.com/api/repositories \
+  -H "Authorization: Bearer your_api_key_here" \
+  -H "Content-Type: application/json" \
+  -d '{"repo_url": "https://github.com/owner/repo", ...}'
+```
+## Security Features
+
+### Required Secrets Management
+
+The application requires three secrets to be set before starting:
+
+1. **ENCRYPTION_KEY**: Fernet key for encrypting repository secrets in the database
+2. **ADMIN_PASSWORD_HASH**: Argon2id hash for admin authentication
+3. **FLASK_SECRET_KEY**: Secret key for Flask session management
+
+**Generate all secrets at once:**
+
+```bash
+python generate_required_secrets.py
+```
+
+The script will:
+- Generate a secure Fernet encryption key
+- Generate a secure Flask secret key (64-character hex)
+- Prompt for admin password and create Argon2id hash
+- Display all secrets ready to copy to `.env` or `docker-compose.yml`
+
+**Check if secrets are configured:**
+
+```bash
+python generate_required_secrets.py --check
+```
+
+This will verify all required environment variables are set and exit with an error if any are missing.
+
+**Manual generation (if needed):**
+
+```bash
+# ENCRYPTION_KEY
+python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+
+# FLASK_SECRET_KEY
+python -c "import secrets; print(secrets.token_hex(32))"
+
+# ADMIN_PASSWORD_HASH
+python -c "from argon2 import PasswordHasher; ph = PasswordHasher(); print(ph.hash('your-password'))"
+```
+
+### Admin Password Setup
+
+**Note:** Use `python generate_required_secrets.py` to generate all required secrets including the admin password hash.
+
+**Note:** Use `python generate_required_secrets.py` to generate all required secrets including the admin password hash.
 
 ## Database Schema
 
@@ -132,6 +255,18 @@ CREATE TABLE user_events (
     repository_id INTEGER NOT NULL,
     event_type TEXT NOT NULL,
     UNIQUE(github_user_id, repository_id, event_type)
+)
+```
+
+### api_keys Table
+```sql
+CREATE TABLE api_keys (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    key_hash TEXT NOT NULL UNIQUE,
+    name TEXT NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    last_used TIMESTAMP,
+    is_active INTEGER DEFAULT 1
 )
 ```
 
@@ -211,8 +346,10 @@ The application will be available at `http://localhost:5000`
 
 ```bash
 # Check code style
-pylint main.py --fail-under=10.0
+isort main.py
+black main.py
 flake8 main.py
+pylint main.py --fail-under=10.0
 ```
 
 ### File Structure

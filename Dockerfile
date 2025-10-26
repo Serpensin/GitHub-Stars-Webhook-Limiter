@@ -1,11 +1,36 @@
+# Builder stage
+FROM python:3.14-alpine AS builder
+
+WORKDIR /app
+
+# Install build dependencies
+RUN apk add --no-cache build-base linux-headers libffi-dev openssl-dev
+
+# Copy and install Python dependencies
+COPY requirements.txt .
+RUN python -m pip install --upgrade pip && \
+    pip install --upgrade setuptools wheel && \
+    pip install --prefix=/install --no-warn-script-location \
+        -r requirements.txt \
+        gunicorn gevent greenlet
+
+# Final stage
 FROM python:3.14-alpine
 
 WORKDIR /app
 
+# Copy application files
 COPY *.py .
-COPY requirements.txt .
+COPY .config/ ./.config/
 COPY templates/ ./templates/
 COPY static/ ./static/
+COPY CustomModules/ ./CustomModules/
+
+# Install only runtime dependencies
+RUN apk add --no-cache curl libstdc++
+
+# Copy installed Python packages from builder
+COPY --from=builder /install /usr/local
 
 ENV TERM=xterm
 ENV PYTHONUNBUFFERED=1
@@ -13,14 +38,6 @@ ENV PYTHONUNBUFFERED=1
 ARG TARGETPLATFORM
 ARG BUILD_DATE
 ARG COMMIT
-
-RUN apk add --no-cache --virtual .build-deps build-base linux-headers libffi-dev openssl-dev && \
-    apk add curl && \
-    python -m pip install --upgrade pip && \
-  pip install --upgrade setuptools && \
-    pip install gunicorn && \
-    pip install -r requirements.txt && \
-  apk del .build-deps
 
 EXPOSE 5000
 
@@ -31,4 +48,4 @@ LABEL release=$BUILD_DATE
 LABEL VERSION="2.0.0"
 LABEL url="https://github.com/Serpensin/GitHub-Stars-Webhook-Limiter"
 
-CMD ["gunicorn", "-w", "4", "main:app", "-b", ":5000"]
+CMD ["gunicorn", "-c", ".config/gunicorn.conf.py", "main:app"]

@@ -4,8 +4,7 @@
     <SchemaVersion>2.0</SchemaVersion>
     <ProjectGuid>06ea2d87-2e33-4683-bf9b-1f7a1cc8f658</ProjectGuid>
     <ProjectHome>.</ProjectHome>
-    <StartupFile>
-    </StartupFile>
+    <StartupFile>main.py</StartupFile>
     <SearchPath>
     </SearchPath>
     <WorkingDirectory>.</WorkingDirectory>
@@ -38,6 +37,7 @@
   <ItemGroup>
     <Folder Include=".github\" />
     <Folder Include=".github\workflows\" />
+    <Folder Include="CustomModules\" />
     <Folder Include="static\" />
     <Folder Include="templates\" />
   </ItemGroup>
@@ -53,7 +53,11 @@
     </Interpreter>
   </ItemGroup>
   <ItemGroup>
+    <Compile Include="CustomModules\LogHandler.py" />
+    <Compile Include="CustomModules\__init__.py" />
+    <Compile Include="generate_admin_password.py" />
     <Compile Include="main.py" />
+    <Compile Include="test_authentication.py" />
   </ItemGroup>
   <Import Project="$(MSBuildExtensionsPath32)\Microsoft\VisualStudio\v$(VisualStudioVersion)\Python Tools\Microsoft.PythonTools.targets" />
   <!-- Uncomment the CoreCompile target to enable the Build command in
