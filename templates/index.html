@@ -4,6 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>GitHub Events Limiter - Repository Management</title>
+    <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
     <link rel="stylesheet" href="/static/style.css">
     <script>
         // CSRF token for API authentication - session-specific
@@ -17,17 +18,19 @@
             <h1>&#128276; GitHub Events Limiter</h1>
             <p>Manage your GitHub webhook notifications to Discord</p>
             <div style="text-align: right; margin-top: 10px;">
+                <a href="/docs" style="color: #666; text-decoration: none; font-size: 0.9em; margin-right: 15px;">📚 API Docs</a>
+                <a href="/try" style="color: #667eea; text-decoration: none; font-size: 0.9em; margin-right: 15px; font-weight: 500;">🧪 Try API</a>
                 <a href="/admin" style="color: #666; text-decoration: none; font-size: 0.9em;">🔐 Admin Panel</a>
             </div>
-    </header>
-
+        </header>
+        
         <div class="tabs">
-      <button class="tab-button active" onclick="showTab('add')">Add Repository</button>
- <button class="tab-button" onclick="showTab('manage')">Manage Repository</button>
+            <button class="tab-button active" onclick="showTab('add', event)">Add Repository</button>
+            <button class="tab-button" onclick="showTab('manage', event)">Manage Repository</button>
         </div>
 
-     <!-- Add Repository Tab -->
-     <div id="add-tab" class="tab-content active">
+        <!-- Add Repository Tab -->
+        <div id="add-tab" class="tab-content active">
  <div class="card">
            <h2>Add New Repository</h2>
       <form id="add-form">
@@ -73,30 +76,25 @@
 
         <!-- Manage Repository Tab -->
         <div id="manage-tab" class="tab-content">
-     <div class="card">
-        <h2>Verify Repository Access</h2>
-     <p>Enter your repository credentials to edit or delete a configuration.</p>
-  <form id="verify-form">
-        <div class="form-group">
-       <label for="verify-repo-url">GitHub Repository URL *</label>
-             <input type="url" id="verify-repo-url" placeholder="https://github.com/owner/repo" required>
+            <div class="card">
+                <h2>Load Repository Configuration</h2>
+                <p style="color: #666; margin-bottom: 20px;">Enter your repository URL and Discord webhook to load and manage the configuration.</p>
+                <form id="verify-form">
+                    <div class="form-group">
+                        <label for="verify-repo-url">GitHub Repository URL *</label>
+                        <input type="url" id="verify-repo-url" placeholder="https://github.com/owner/repo" required>
                     </div>
 
-            <div class="form-group">
- <label for="verify-secret">Current Webhook Secret *</label>
-            <input type="password" id="verify-secret" placeholder="Enter your current secret" required>
-                </div>
+                    <div class="form-group">
+                        <label for="verify-discord-webhook">Discord Webhook URL *</label>
+                        <input type="url" id="verify-discord-webhook" placeholder="https://discord.com/api/webhooks/..." required>
+                    </div>
 
-            <div class="form-group">
-    <label for="verify-discord-webhook">Current Discord Webhook URL *</label>
-              <input type="url" id="verify-discord-webhook" placeholder="https://discord.com/api/webhooks/..." required>
-               </div>
+                    <button type="submit" class="btn btn-primary">Load Repository</button>
+                </form>
+            </div>
 
-          <button type="submit" class="btn btn-primary">Verify & Load</button>
-    </form>
-  </div>
-
-         <!-- Edit/Delete Form (hidden until verified) -->
+            <!-- Edit/Delete Form (hidden until verified) -->
             <div id="edit-section" class="card" style="display: none;">
    <h2>Update Repository Configuration</h2>
        <form id="edit-form">

@@ -137,6 +137,7 @@ Star or watch your repository to verify Discord notifications work!
 ### Web Interface
 - `GET /` - Main web interface for repository management
 - `GET /admin` - Admin panel for API key management (password protected)
+- `GET /license` - View license information
 
 ### Webhook
 - `POST /webhook` - GitHub webhook endpoint (handles star, watch, ping events)
@@ -144,23 +145,42 @@ Star or watch your repository to verify Discord notifications work!
 ### Repository Management API (Protected)
 **Authentication Required**: These endpoints require either:
 - Same-origin Referer header (automatic when using the web interface), OR
-- API key via `Authorization: Bearer <api_key>` header
+- API key via `Authorization: Bearer <api_key>` header with appropriate permissions
 
-- `POST /api/repositories` - Add new repository configuration
-- `POST /api/repositories/verify` - Verify repository credentials for editing
-- `PUT /api/repositories/<repo_id>` - Update repository configuration
-- `DELETE /api/repositories/<repo_id>` - Delete repository configuration
-- `GET /api/generate-secret` - Generate secure random secret (44 chars)
+#### Repository Operations
+- `POST /api/repositories` - Add new repository configuration (requires `repositories-add` permission)
+- `PATCH /api/repositories` - Update repository configuration (requires `repositories-update` permission)
+- `DELETE /api/repositories` - Delete repository configuration (requires `repositories-delete` permission)
+- `POST /api/repositories/verify` - Verify repository credentials for editing (requires `repositories-verify` permission)
+
+#### Utilities
+- `GET /api/generate-secret` - Generate secure random secret (44 chars) (requires `generate-secret` permission)
+- `GET /api/events` - List all available event types (star, watch) (requires `events-list` permission)
+
+#### Permissions API
+- `GET /api/permissions` - List all available permissions with values (requires `permissions-list` permission)
+- `POST /api/permissions/calculate` - Calculate permission bitmap from list (requires `permissions-calculate` permission)
+- `POST /api/permissions/decode` - Decode permission bitmap to list (requires `permissions-decode` permission)
 
 ### Admin API (Password Protected)
 **Authentication Required**: Session-based authentication via admin panel login
 
+#### Authentication
 - `POST /admin/api/login` - Authenticate with admin password
 - `POST /admin/api/logout` - End admin session
+
+#### API Key Management
 - `GET /admin/api/keys` - List all API keys
 - `POST /admin/api/keys` - Create new API key
+- `PATCH /admin/api/keys/<key_id>` - Update API key (name, permissions, rate limit)
 - `DELETE /admin/api/keys/<key_id>` - Delete API key
 - `POST /admin/api/keys/<key_id>/toggle` - Activate/deactivate API key
+- `POST /admin/api/keys/bulk` - Bulk operations (activate, deactivate, delete multiple keys)
+
+#### Logs
+- `GET /admin/api/logs/list` - List available log files
+- `GET /admin/api/logs` - View log file contents
+- `GET /admin/api/logs/download` - Download log file
 
 ## API Authentication
 
@@ -345,11 +365,18 @@ The application will be available at `http://localhost:5000`
 ### Running Linters
 
 ```bash
+# Format imports
+isort .
+
+# Format code
+black .
+
 # Check code style
-isort main.py
-black main.py
-flake8 main.py
-pylint main.py --fail-under=10.0
+pip install flake8-pyproject
+flake8 .
+
+# Run static analysis
+pylint . --fail-under=10.0
 ```
 
 ### File Structure

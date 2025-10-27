@@ -4,7 +4,7 @@ FROM python:3.14-alpine AS builder
 WORKDIR /app
 
 # Install build dependencies
-RUN apk add --no-cache build-base linux-headers libffi-dev openssl-dev
+RUN apk add --no-cache build-base libffi-dev linux-headers openssl-dev
 
 # Copy and install Python dependencies
 COPY requirements.txt .
@@ -22,9 +22,14 @@ WORKDIR /app
 # Copy application files
 COPY *.py .
 COPY .config/ ./.config/
+COPY routes/ ./routes/
 COPY templates/ ./templates/
 COPY static/ ./static/
 COPY CustomModules/ ./CustomModules/
+
+# Copy License and README
+COPY LICENSE.txt .
+COPY README.md .
 
 # Install only runtime dependencies
 RUN apk add --no-cache curl libstdc++

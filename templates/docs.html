@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>API Documentation - GitHub Events Limiter</title>
+    <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+        }
+        .api-header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 20px;
+            text-align: center;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        .api-header h1 {
+            margin: 0 0 10px 0;
+            font-size: 2em;
+        }
+        .api-header p {
+            margin: 0 0 15px 0;
+            opacity: 0.9;
+        }
+        .api-links {
+            margin: 15px 0 0 0;
+            display: flex;
+            justify-content: center;
+            gap: 15px;
+            flex-wrap: wrap;
+        }
+        .api-links a {
+            background: rgba(255,255,255,0.2);
+            color: white;
+            padding: 10px 20px;
+            text-decoration: none;
+            border-radius: 5px;
+            font-weight: 500;
+            transition: background 0.3s;
+            border: 1px solid rgba(255,255,255,0.3);
+        }
+        .api-links a:hover {
+            background: rgba(255,255,255,0.3);
+        }
+        .api-links a.primary {
+            background: rgba(255,255,255,0.9);
+            color: #667eea;
+            border-color: transparent;
+        }
+        .api-links a.primary:hover {
+            background: white;
+        }
+    </style>
+</head>
+<body>
+    <div class="api-header">
+        <h1>📚 GitHub Stars Webhook Limiter API</h1>
+        <p>Complete API reference and interactive testing</p>
+        <div class="api-links">
+            <a href="/" title="Back to Home">🏠 Home</a>
+            <a href="/admin" title="Admin Panel">🔐 Admin Panel</a>
+            <a href="/try" class="primary" title="Test API endpoints with your API key">🧪 Try API (Interactive)</a>
+            <a href="/spec" title="Download OpenAPI Specification">📄 OpenAPI Spec</a>
+        </div>
+    </div>
+    
+    <!-- Redoc requires a spec-url pointing to the OpenAPI spec -->
+    <redoc spec-url="/static/openapi.yaml"></redoc>
+    
+    <!-- Redoc standalone bundle -->
+    <script src="/static/redoc.standalone.js"></script>
+</body>
+</html>

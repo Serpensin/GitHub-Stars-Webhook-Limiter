@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+  <!-- Background circle -->
+  <circle cx="50" cy="50" r="48" fill="#1a1a2e" stroke="#16213e" stroke-width="2"/>
+  
+  <!-- GitHub star icon (simplified) -->
+  <path d="M 50 20 L 54 38 L 72 38 L 58 48 L 62 66 L 50 56 L 38 66 L 42 48 L 28 38 L 46 38 Z" 
+        fill="#ffd700" stroke="#ffa500" stroke-width="1.5"/>
+  
+  <!-- Webhook symbol (link/chain) -->
+  <g transform="translate(65, 65)" opacity="0.9">
+    <!-- Chain link left -->
+    <rect x="0" y="4" width="8" height="3" rx="1.5" fill="#4ecdc4" stroke="#45b7af" stroke-width="0.8"/>
+    <!-- Chain link right -->
+    <rect x="10" y="4" width="8" height="3" rx="1.5" fill="#4ecdc4" stroke="#45b7af" stroke-width="0.8"/>
+    <!-- Connecting line -->
+    <line x1="8" y1="5.5" x2="10" y2="5.5" stroke="#4ecdc4" stroke-width="1.5"/>
+  </g>
+  
+  <!-- Bell notification indicator (top right) -->
+  <g transform="translate(70, 25)">
+    <path d="M 0 -3 L -3 0 L 3 0 Z" fill="#ff6b6b"/>
+    <circle cx="0" cy="1.5" r="3.5" fill="#ff6b6b" stroke="#ff5252" stroke-width="0.8"/>
+  </g>
+</svg>

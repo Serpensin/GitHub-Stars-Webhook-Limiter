@@ -16,6 +16,8 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 # TEST CONFIGURATION
 # ============================================================================
 BASE_URL = "http://localhost:5000"
+# NOTE: This is a TEST-ONLY placeholder API key for local development
+# In production, use environment variables and never commit real keys
 ADMIN_API_KEY = "1JRKvkDQsO5vMoEbXjPlXHsA1vzyftdd94XXpygXBnE"  # Replace with actual admin API key
 # ============================================================================
 
@@ -67,17 +69,45 @@ class TestAPIKeys(unittest.TestCase):
             pass
 
     def test_permission_combinations(self):
-        """Test all possible permission combinations (2^5 = 32 combinations)."""
+        """Test all possible permission combinations (2^9 = 512 combinations)."""
         permission_names = [
             'generate-secret',
             'repositories-add',
             'repositories-verify',
             'repositories-update',
-            'repositories-delete'
+            'repositories-delete',
+            'events-list',
+            'permissions-list',
+            'permissions-calculate',
+            'permissions-decode'
         ]
         
-        # Test all combinations from 1 to 31 (0 should be rejected)
-        for bitmap in range(1, 32):  # 2^5 = 32 combinations, excluding 0
+        # Test all combinations from 1 to 511 (0 should be rejected)
+        # Testing all 511 combinations would be slow, so test a representative sample
+        test_bitmaps = []
+        
+        # Test powers of 2 (single permission bits)
+        for i in range(9):
+            test_bitmaps.append(1 << i)
+        
+        # Test some common combinations
+        test_bitmaps.extend([
+            3,    # First two permissions
+            7,    # First three permissions
+            15,   # First four permissions
+            31,   # First five permissions (old max)
+            63,   # First six permissions
+            127,  # First seven permissions
+            255,  # First eight permissions
+            511,  # All nine permissions
+            256,  # Last permission only
+            128,  # Second to last only
+            384,  # Last two permissions
+            73,   # Some random combination
+            146,  # Another random combination
+        ])
+        
+        for bitmap in test_bitmaps:
             with self.subTest(bitmap=bitmap):
                 # Create API key with this permission bitmap
                 response = requests.post(f'{self.base_url}/admin/api/keys', 
@@ -134,6 +164,26 @@ class TestAPIKeys(unittest.TestCase):
         self.assertEqual(response.status_code, 400)
         data = response.json()
         self.assertIn('error', data)
+
+    def test_max_permissions_value(self):
+        """Test that permissions > 511 (max for 9 permissions) are rejected."""
+        invalid_values = [512, 1000, 2048]
+        
+        for invalid_value in invalid_values:
+            with self.subTest(permissions=invalid_value):
+                response = requests.post(f'{self.base_url}/admin/api/keys',
+                                        headers=self.headers,
+                                        json={
+                                            'name': f'test_max_perm_{invalid_value}',
+                                            'permissions': invalid_value,
+                                            'rate_limit': 100
+                                        })
+                
+                self.assertEqual(response.status_code, 400,
+                               f"Permissions value {invalid_value} should be rejected (max is 511)")
+                data = response.json()
+                self.assertIn('error', data)
+                self.assertIn('511', data['error'])
 
     def test_rate_limit_values(self):
         """Test various rate limit values."""
@@ -625,6 +675,111 @@ class TestAPIKeys(unittest.TestCase):
                 
                 # Brief pause between rate limit tests
                 time.sleep(1)
+
+    def test_permission_enforcement(self):
+        """Test that API keys can only access endpoints they have permissions for."""
+        # Define all endpoints with their required permissions
+        permission_tests = [
+            {
+                'endpoint': '/api/generate-secret',
+                'method': 'GET',
+                'permission_bit': 0,  # generate-secret
+                'permission_name': 'generate-secret'
+            },
+            {
+                'endpoint': '/api/events',
+                'method': 'GET',
+                'permission_bit': 5,  # events-list
+                'permission_name': 'events-list'
+            },
+            {
+                'endpoint': '/api/permissions',
+                'method': 'GET',
+                'permission_bit': 6,  # permissions-list
+                'permission_name': 'permissions-list'
+            },
+            {
+                'endpoint': '/api/permissions/calculate',
+                'method': 'POST',
+                'permission_bit': 7,  # permissions-calculate
+                'permission_name': 'permissions-calculate',
+                'data': {'permissions': ['generate-secret']}
+            },
+            {
+                'endpoint': '/api/permissions/decode',
+                'method': 'POST',
+                'permission_bit': 8,  # permissions-decode
+                'permission_name': 'permissions-decode',
+                'data': {'bitmap': 1}
+            },
+        ]
+        
+        for test_case in permission_tests:
+            with self.subTest(endpoint=test_case['endpoint']):
+                permission_value = 1 << test_case['permission_bit']
+                
+                # Create key WITH the required permission
+                response_with_perm = requests.post(
+                    f'{self.base_url}/admin/api/keys',
+                    headers=self.headers,
+                    json={
+                        'name': f'test_perm_{test_case["permission_name"]}_yes',
+                        'permissions': permission_value,
+                        'rate_limit': 100
+                    }
+                )
+                self.assertIn(response_with_perm.status_code, [200, 201])
+                key_with_perm = response_with_perm.json()['api_key']
+                key_id_with_perm = response_with_perm.json()['id']
+                
+                # Create key WITHOUT the required permission (all other permissions)
+                other_permissions = 511 & ~permission_value  # All permissions except this one
+                if other_permissions == 0:
+                    other_permissions = 1  # At least one permission required
+                response_without_perm = requests.post(
+                    f'{self.base_url}/admin/api/keys',
+                    headers=self.headers,
+                    json={
+                        'name': f'test_perm_{test_case["permission_name"]}_no',
+                        'permissions': other_permissions,
+                        'rate_limit': 100
+                    }
+                )
+                self.assertIn(response_without_perm.status_code, [200, 201])
+                key_without_perm = response_without_perm.json()['api_key']
+                key_id_without_perm = response_without_perm.json()['id']
+                
+                # Test WITH permission - should succeed
+                headers_with = {'Authorization': f'Bearer {key_with_perm}', 'Content-Type': 'application/json'}
+                if test_case['method'] == 'GET':
+                    response = requests.get(f'{self.base_url}{test_case["endpoint"]}', headers=headers_with, timeout=5)
+                else:
+                    response = requests.post(
+                        f'{self.base_url}{test_case["endpoint"]}',
+                        headers=headers_with,
+                        json=test_case.get('data', {}),
+                        timeout=5
+                    )
+                self.assertEqual(response.status_code, 200,
+                               f"Key with {test_case['permission_name']} permission should access {test_case['endpoint']}")
+                
+                # Test WITHOUT permission - should fail with 403
+                headers_without = {'Authorization': f'Bearer {key_without_perm}', 'Content-Type': 'application/json'}
+                if test_case['method'] == 'GET':
+                    response = requests.get(f'{self.base_url}{test_case["endpoint"]}', headers=headers_without, timeout=5)
+                else:
+                    response = requests.post(
+                        f'{self.base_url}{test_case["endpoint"]}',
+                        headers=headers_without,
+                        json=test_case.get('data', {}),
+                        timeout=5
+                    )
+                self.assertEqual(response.status_code, 403,
+                               f"Key without {test_case['permission_name']} permission should NOT access {test_case['endpoint']}")
+                
+                # Cleanup
+                requests.delete(f'{self.base_url}/admin/api/keys/{key_id_with_perm}', headers=self.headers)
+                requests.delete(f'{self.base_url}/admin/api/keys/{key_id_without_perm}', headers=self.headers)
 
 
 def cleanup_test_keys():

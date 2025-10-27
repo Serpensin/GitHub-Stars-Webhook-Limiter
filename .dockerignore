@@ -1,0 +1,27 @@
+# Ignore development files
+.git/
+.gitignore
+.github/
+.vscode/
+*.pyproj
+*.sln
+debug_docker.ps1
+
+# Ignore test files
+Tests/
+
+# Ignore Python cache and virtual environment
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+
+# Ignore log files
+*.log
+logs/
+
+# Ignore setup and configuration scripts
+generate_required_secrets.py

@@ -13,8 +13,9 @@ with incomplete configuration.
 
 import os
 import re
-import sys
 import secrets
+import sys
+
 from argon2 import PasswordHasher
 from cryptography.fernet import Fernet
 from dotenv import load_dotenv
@@ -38,7 +39,7 @@ INVALID_PLACEHOLDERS = {
         "your-flask-secret-key-here",
         "your-secret-key-here",
         "",
-    ]
+    ],
 }
 
 
@@ -56,12 +57,12 @@ def validate_argon2_hash(hash_string: str) -> bool:
         return False
 
     # Check format: $argon2id$v=19$m=...,t=...,p=...$...$...
-    pattern = r'^\$argon2id?\$v=\d+\$m=\d+,t=\d+,p=\d+\$[A-Za-z0-9+/]+\$[A-Za-z0-9+/]+$'
+    pattern = r"^\$argon2id?\$v=\d+\$m=\d+,t=\d+,p=\d+\$[A-Za-z0-9+/]+\$[A-Za-z0-9+/]+$"
     if not re.match(pattern, hash_string):
         return False
 
     # Additional validation: verify it starts with correct prefix
-    return hash_string.startswith('$argon2')
+    return hash_string.startswith("$argon2")
 
 
 def check_required_env_vars():
@@ -69,11 +70,7 @@ def check_required_env_vars():
     Check if all required environment variables are set and valid.
     Exit immediately if any are missing or contain placeholder values.
     """
-    required_vars = [
-        "ENCRYPTION_KEY",
-        "ADMIN_PASSWORD_HASH",
-        "FLASK_SECRET_KEY"
-    ]
+    required_vars = ["ENCRYPTION_KEY", "ADMIN_PASSWORD_HASH", "FLASK_SECRET_KEY"]
 
     missing_vars = []
     invalid_vars = []

@@ -19,8 +19,8 @@ except ImportError:
     pass  # gevent not available (running in dev mode)
 
 import fcntl
-import tempfile
 import logging
+import tempfile
 
 # Add .config directory (current directory) to path for config import
 config_dir = os.path.dirname(os.path.abspath(__file__))
@@ -36,68 +36,70 @@ from CustomModules.LogHandler import LogManager
 os.makedirs(app_config.LOG_FOLDER, exist_ok=True)
 log_manager = LogManager(app_config.LOG_FOLDER, app_config.APP_NAME, app_config.LOG_LEVEL)
 
+
 # Custom logger class that uses our LogHandler
 class GunicornLogger:
     """Custom Gunicorn logger that integrates with our LogHandler."""
-    
+
     def __init__(self, cfg):
         self.cfg = cfg
         # Use clearer logger names - "gunicorn" instead of "gunicorn.error"
         self.error_logger = log_manager.get_logger("gunicorn")
         self.access_logger = log_manager.get_logger("gunicorn.access")
-        
+
         # Set log levels using getLevelNamesMapping() instead of deprecated getLevelName()
         level_name = cfg.loglevel.upper()
         level = logging.getLevelNamesMapping().get(level_name, logging.INFO)
         self.error_logger.setLevel(level)
         self.access_logger.setLevel(level)
-    
+
     def critical(self, msg, *args, **kwargs):
         self.error_logger.critical(msg, *args, **kwargs)
-    
+
     def error(self, msg, *args, **kwargs):
         self.error_logger.error(msg, *args, **kwargs)
-    
+
     def warning(self, msg, *args, **kwargs):
         self.error_logger.warning(msg, *args, **kwargs)
-    
+
     def info(self, msg, *args, **kwargs):
         self.error_logger.info(msg, *args, **kwargs)
-    
+
     def debug(self, msg, *args, **kwargs):
         self.error_logger.debug(msg, *args, **kwargs)
-    
+
     def exception(self, msg, *args, **kwargs):
         self.error_logger.exception(msg, *args, **kwargs)
-    
+
     def log(self, lvl, msg, *args, **kwargs):
         self.error_logger.log(lvl, msg, *args, **kwargs)
-    
+
     def access(self, resp, req, environ, request_time):
         """Log access requests using our custom access logger."""
         # Format: IP - - [time] "request" status size "referrer" "user-agent"
         self.access_logger.info(
             '%s - - [%s] "%s %s %s" %s %s "%s" "%s"',
-            environ.get('REMOTE_ADDR', '-'),
+            environ.get("REMOTE_ADDR", "-"),
             self.now(),
-            environ.get('REQUEST_METHOD', '-'),
-            environ.get('PATH_INFO', '-'),
-            environ.get('SERVER_PROTOCOL', '-'),
+            environ.get("REQUEST_METHOD", "-"),
+            environ.get("PATH_INFO", "-"),
+            environ.get("SERVER_PROTOCOL", "-"),
             resp.status.split()[0],
-            getattr(resp, 'sent', '-'),
-            environ.get('HTTP_REFERER', '-'),
-            environ.get('HTTP_USER_AGENT', '-')
+            getattr(resp, "sent", "-"),
+            environ.get("HTTP_REFERER", "-"),
+            environ.get("HTTP_USER_AGENT", "-"),
         )
-    
+
     def now(self):
         """Get current time in logging format."""
         from datetime import datetime
-        return datetime.now().strftime('%d/%b/%Y:%H:%M:%S %z')
-    
+
+        return datetime.now().strftime("%d/%b/%Y:%H:%M:%S %z")
+
     def reopen_files(self):
         """Reopen log files (no-op for our LogHandler)."""
         pass
-    
+
     def close_on_exec(self):
         """Close log files on exec (no-op for our LogHandler)."""
         pass
@@ -120,7 +122,7 @@ keepalive = app_config.GUNICORN_KEEPALIVE
 logger_class = GunicornLogger  # Use our custom logger class
 loglevel = app_config.LOG_LEVEL.lower()
 accesslog = None  # Disable default access log (we handle it in custom logger)
-errorlog = None   # Disable default error log (we handle it in custom logger)
+errorlog = None  # Disable default error log (we handle it in custom logger)
 
 # Process naming
 proc_name = "github-events-limiter"
@@ -131,23 +133,27 @@ _lock_file = None
 
 # Worker lifecycle hooks
 
+
 def post_fork(server, worker):
     """
     Called after a worker has been forked.
     Start periodic tasks in only the first worker using a file lock.
     """
     global _lock_file
-    
+
     # Try to acquire exclusive lock
     try:
-        _lock_file = open(_lock_file_path, 'w')
+        _lock_file = open(_lock_file_path, "w")
         fcntl.flock(_lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-        
+
         # We got the lock! This worker will handle periodic tasks
-        server.log.info(f"Worker {worker.pid}: Acquired lock - this worker will handle periodic tasks")
-        
+        server.log.info(
+            f"Worker {worker.pid}: Acquired lock - this worker will handle periodic tasks"
+        )
+
         try:
             from main import task_manager
+
             task_manager.start_all_tasks()
             server.log.info(f"Worker {worker.pid}: Periodic tasks started successfully")
         except Exception as e:
@@ -156,10 +162,12 @@ def post_fork(server, worker):
             fcntl.flock(_lock_file.fileno(), fcntl.LOCK_UN)
             _lock_file.close()
             _lock_file = None
-            
+
     except (IOError, OSError):
         # Lock already held by another worker
-        server.log.info(f"Worker {worker.pid}: Regular worker (periodic tasks handled by another worker)")
+        server.log.info(
+            f"Worker {worker.pid}: Regular worker (periodic tasks handled by another worker)"
+        )
         if _lock_file:
             _lock_file.close()
             _lock_file = None
@@ -169,18 +177,21 @@ def on_starting(server):
     """Called before the master process is initialized."""
     server.log.info("Gunicorn master process starting")
 
+
 def on_reload(server):
     """Called on reload."""
     server.log.info("Gunicorn reloading")
+
 
 def when_ready(server):
     """Called after the server is started."""
     server.log.info(f"Gunicorn ready with {workers} workers")
 
+
 def on_exit(server):
     """Called on exit."""
     global _lock_file
-    
+
     # Clean up lock file
     if _lock_file:
         try:
@@ -189,12 +200,12 @@ def on_exit(server):
         except:
             pass
         _lock_file = None
-    
+
     # Remove lock file
     try:
         if os.path.exists(_lock_file_path):
             os.unlink(_lock_file_path)
     except:
         pass
-    
+
     server.log.info("Gunicorn shutting down")

@@ -1,0 +1,95 @@
+[tool.black]
+line-length = 100
+target-version = ['py311']
+exclude = '''
+/(
+    \.git
+  | __pycache__
+  | \.env
+  | env
+  | \.venv
+  | venv
+  | Tests
+  | GitHub_Events_Limiter
+)/
+'''
+
+[tool.isort]
+profile = "black"
+line_length = 100
+skip = [
+    ".git",
+    "__pycache__",
+    ".env",
+    "env",
+    ".venv",
+    "venv",
+    "Tests",
+    "GitHub_Events_Limiter"
+]
+known_first_party = ["CustomModules", "routes"]
+known_third_party = ["flask", "cryptography", "argon2", "requests", "sentry_sdk"]
+
+[tool.flake8]
+max-line-length = 100
+exclude = [
+    ".git",
+    "__pycache__",
+    "env",
+    ".env",
+    ".venv",
+    "venv",
+    "Tests",
+    "GitHub_Events_Limiter",
+]
+per-file-ignores = [
+    "main.py:E402",
+    ".config/gunicorn.conf.py:E402,F401,E722",
+]
+
+[tool.pylint.format]
+max-line-length = 100
+
+[tool.pylint."messages control"]
+disable = [
+    "logging-fstring-interpolation",
+    "line-too-long",
+    "too-many-lines",
+    "wrong-import-position",
+    "broad-exception-caught",
+    "invalid-name",
+    "missing-module-docstring",
+    "missing-class-docstring",
+    "missing-function-docstring",
+    "too-few-public-methods",
+    "too-many-arguments",
+    "too-many-positional-arguments",
+    "too-many-locals",
+    "too-many-return-statements",
+    "too-many-branches",
+    "too-many-statements",
+    "too-many-instance-attributes",
+    "no-else-return",
+    "unused-argument",
+    "global-statement",
+    "import-outside-toplevel",
+    "import-error",
+    "duplicate-code",
+    "unnecessary-pass",
+    "consider-using-with",
+    "bare-except",
+    "unused-import",
+    "unspecified-encoding",
+    "possibly-used-before-assignment",
+]
+
+[tool.pylint.main]
+ignore-paths = [
+    "^env/.*$",
+    "^\\.env/.*$",
+    "^\\.venv/.*$",
+    "^venv/.*$",
+    "^Tests/.*$",
+    "^GitHub_Events_Limiter/.*$",
+    "^.*/__pycache__/.*$",
+]

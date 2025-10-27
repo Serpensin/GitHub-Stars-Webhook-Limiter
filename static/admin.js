@@ -54,7 +54,11 @@ document.addEventListener('DOMContentLoaded', () => {
         'perm-repositories-add',
         'perm-repositories-verify',
         'perm-repositories-update',
-        'perm-repositories-delete'
+        'perm-repositories-delete',
+        'perm-events-list',
+        'perm-permissions-list',
+        'perm-permissions-calculate',
+        'perm-permissions-decode'
     ];
     const adminKeyCheckbox = document.getElementById('is-admin-key');
     const generateBtn = document.getElementById('generate-key-btn');
@@ -135,12 +139,16 @@ addKeyForm.addEventListener('submit', async (e) => {
         permissionsBitmap = -1; // Use -1 or a special value for full access
         rate_limit = 0;
     } else {
-        // Build bitmap from checkboxes
+        // Build bitmap from checkboxes (bits 0-8 for 9 permissions)
         if (document.getElementById('perm-generate-secret').checked) permissionsBitmap |= (1 << 0);
         if (document.getElementById('perm-repositories-add').checked) permissionsBitmap |= (1 << 1);
         if (document.getElementById('perm-repositories-verify').checked) permissionsBitmap |= (1 << 2);
         if (document.getElementById('perm-repositories-update').checked) permissionsBitmap |= (1 << 3);
         if (document.getElementById('perm-repositories-delete').checked) permissionsBitmap |= (1 << 4);
+        if (document.getElementById('perm-events-list').checked) permissionsBitmap |= (1 << 5);
+        if (document.getElementById('perm-permissions-list').checked) permissionsBitmap |= (1 << 6);
+        if (document.getElementById('perm-permissions-calculate').checked) permissionsBitmap |= (1 << 7);
+        if (document.getElementById('perm-permissions-decode').checked) permissionsBitmap |= (1 << 8);
         rate_limit = parseInt(document.getElementById('key-rate-limit').value);
     }
 
@@ -161,6 +169,10 @@ addKeyForm.addEventListener('submit', async (e) => {
             document.getElementById('perm-repositories-verify').checked = false;
             document.getElementById('perm-repositories-update').checked = false;
             document.getElementById('perm-repositories-delete').checked = false;
+            document.getElementById('perm-events-list').checked = false;
+            document.getElementById('perm-permissions-list').checked = false;
+            document.getElementById('perm-permissions-calculate').checked = false;
+            document.getElementById('perm-permissions-decode').checked = false;
             document.getElementById('key-rate-limit').value = '100';
             toggleAdminKeyOptions(); // Reset visibility
             resetSessionTimer(); // Reset timer on successful API call
@@ -201,9 +213,27 @@ function toggleAdminKeyOptions() {
 
 // Check Authentication
 async function checkAuthentication() {
-    // Don't try to fetch keys if we're not authenticated - avoid 401 errors in console
-    // Just show the login page
-    showLogin();
+    // Try to load keys to check if session is still valid
+    try {
+        const response = await fetch('/admin/api/keys');
+        if (response.ok) {
+            // Session is still valid, show dashboard
+            isAuthenticated = true;
+            sessionStartTime = Date.now();
+            sessionExpiredByTimeout = false;
+            showDashboard();
+            startSessionTimer();
+            const data = await response.json();
+            renderKeys(data.keys);
+        } else {
+            // Not authenticated, show login
+            showLogin();
+        }
+    } catch (error) {
+        // Network error or other issue, show login
+        console.error('Auth check error:', error);
+        showLogin();
+    }
 }
 
 // Load Keys
@@ -250,112 +280,168 @@ function renderKeys(keys) {
 
     const table = document.createElement('table');
     table.className = 'keys-table';
-    table.innerHTML = `
-        <thead>
-            <tr>
-                <th class="col-checkbox"><input type="checkbox" class="key-checkbox-header" onchange="toggleSelectAll(this)"></th>
-                <th class="col-name">Name</th>
-                <th class="col-type">Type</th>
-                <th class="col-status">Status</th>
-                <th class="col-permissions">Permissions</th>
-                <th class="col-rate">Rate Limit</th>
-                <th class="col-created">Created</th>
-                <th class="col-used">Last Used</th>
-                <th class="col-actions">Actions</th>
-            </tr>
-        </thead>
-        <tbody>
-            ${keys.map(key => {
-                const isAdminKey = key.is_admin_key || false;
-                const permissionsBitmap = key.permissions || 0;
-                
-                // Format permissions for display
-                let permDisplay;
-                if (isAdminKey || permissionsBitmap === -1) {
-                    permDisplay = '<span class="perm-full-access">FULL ACCESS</span>';
-                } else {
-                    // Decode bitmap to display enabled permissions with readable names
-                    const permFullNames = [
-                        'Generate Secret',
-                        'Add Repository',
-                        'Verify Repository',
-                        'Update Repository',
-                        'Delete Repository'
-                    ];
-                    let enabled = [];
-                    for (let i = 0; i < permFullNames.length; i++) {
-                        if ((permissionsBitmap & (1 << i)) !== 0) {
-                            enabled.push(permFullNames[i]);
-                        }
-                    }
-                    if (enabled.length === 0) {
-                        permDisplay = '<span class="perm-none">No Permissions</span>';
-                    } else {
-                        // Show all permissions as badges
-                        permDisplay = '<div class="perm-badges">' + 
-                            enabled.map(p => `<span class="perm-badge">${p}</span>`).join('') + 
-                            '</div>';
-                    }
-                }
-                
-                // Determine if key can be edited (admin keys cannot be edited)
-                const canEdit = !isAdminKey;
-                
-                return `
-                <tr>
-                    <td class="col-checkbox">
-                        <input type="checkbox" class="key-checkbox" value="${key.id}" onchange="updateBulkActions()">
-                    </td>
-                    <td class="col-name" title="${escapeHtml(key.name)}">
-                        ${escapeHtml(key.name)}
-                    </td>
-                    <td class="col-type">
-                        <span class="badge badge-type ${isAdminKey ? 'badge-admin' : 'badge-regular'}">
-                            ${isAdminKey ? '👑 Admin' : '🔑 Regular'}
-                        </span>
-                    </td>
-                    <td class="col-status">
-                        <span class="badge badge-status ${key.is_active ? 'badge-active' : 'badge-inactive'}">
-                            ${key.is_active ? '✅ Active' : '❌ Inactive'}
-                        </span>
-                    </td>
-                    <td class="col-permissions">
-                        ${permDisplay}
-                    </td>
-                    <td class="col-rate">
-                        <span class="rate-limit">
-                            ${isAdminKey ? '∞' : (key.rate_limit === 0 ? '∞' : (key.rate_limit || 100) + '/hr')}
-                        </span>
-                    </td>
-                    <td class="col-created">
-                        ${formatDate(key.created_at)}
-                    </td>
-                    <td class="col-used">
-                        ${key.last_used ? formatDate(key.last_used) : '<span class="text-muted">Never</span>'}
-                    </td>
-                    <td class="col-actions">
-                        <div class="action-buttons">
-                            ${canEdit 
-                                ? `<button class="btn btn-sm btn-primary" onclick='editKey(${key.id}, ${permissionsBitmap}, ${key.rate_limit || 100})' title="Edit this API key">Edit</button>` 
-                                : '<button class="btn btn-sm btn-disabled" disabled title="Admin keys cannot be edited">Can\'t edit admin key</button>'}
-                            <button class="btn btn-sm ${key.is_active ? 'btn-warning' : 'btn-success'}" 
-                                    onclick="toggleKey(${key.id})" 
-                                    title="${key.is_active ? 'Deactivate this API key' : 'Activate this API key'}">
-                                ${key.is_active ? 'Deactivate' : 'Activate'}
-                            </button>
-                            <button class="btn btn-sm btn-danger" 
-                                    onclick="deleteKey(${key.id}, '${escapeHtml(key.name)}')" 
-                                    title="Delete this API key permanently">
-                                Delete
-                            </button>
-                        </div>
-                    </td>
-                </tr>
-                `;
-            }).join('')}
-        </tbody>
+    
+    // Create thead
+    const thead = document.createElement('thead');
+    thead.innerHTML = `
+        <tr>
+            <th class="col-checkbox"><input type="checkbox" class="key-checkbox-header" onchange="toggleSelectAll(this)"></th>
+            <th class="col-name">Name</th>
+            <th class="col-type">Type</th>
+            <th class="col-status">Status</th>
+            <th class="col-permissions">Permissions</th>
+            <th class="col-rate">Rate Limit</th>
+            <th class="col-created">Created</th>
+            <th class="col-used">Last Used</th>
+            <th class="col-actions">Actions</th>
+        </tr>
     `;
-
+    table.appendChild(thead);
+    
+    // Create tbody using DOM methods instead of innerHTML for security
+    const tbody = document.createElement('tbody');
+    
+    keys.forEach(key => {
+        const isAdminKey = key.is_admin_key || false;
+        const permissionsBitmap = key.permissions || 0;
+        
+        const tr = document.createElement('tr');
+        
+        // Checkbox column
+        const tdCheckbox = document.createElement('td');
+        tdCheckbox.className = 'col-checkbox';
+        const checkbox = document.createElement('input');
+        checkbox.type = 'checkbox';
+        checkbox.className = 'key-checkbox';
+        checkbox.value = String(key.id);
+        checkbox.onchange = updateBulkActions;
+        tdCheckbox.appendChild(checkbox);
+        tr.appendChild(tdCheckbox);
+        
+        // Name column
+        const tdName = document.createElement('td');
+        tdName.className = 'col-name';
+        tdName.title = key.name;
+        tdName.textContent = key.name;
+        tr.appendChild(tdName);
+        
+        // Type column
+        const tdType = document.createElement('td');
+        tdType.className = 'col-type';
+        tdType.innerHTML = `<span class="badge badge-type ${isAdminKey ? 'badge-admin' : 'badge-regular'}">${isAdminKey ? '👑 Admin' : '🔑 Regular'}</span>`;
+        tr.appendChild(tdType);
+        
+        // Status column
+        const tdStatus = document.createElement('td');
+        tdStatus.className = 'col-status';
+        tdStatus.innerHTML = `<span class="badge badge-status ${key.is_active ? 'badge-active' : 'badge-inactive'}">${key.is_active ? '✅ Active' : '❌ Inactive'}</span>`;
+        tr.appendChild(tdStatus);
+        
+        // Permissions column
+        const tdPerms = document.createElement('td');
+        tdPerms.className = 'col-permissions';
+        if (isAdminKey || permissionsBitmap === -1) {
+            tdPerms.innerHTML = '<span class="perm-full-access">FULL ACCESS</span>';
+        } else {
+            const permFullNames = [
+                'Generate Secret',
+                'Add Repository',
+                'Verify Repository',
+                'Update Repository',
+                'Delete Repository'
+            ];
+            let enabled = [];
+            for (let i = 0; i < permFullNames.length; i++) {
+                if ((permissionsBitmap & (1 << i)) !== 0) {
+                    enabled.push(permFullNames[i]);
+                }
+            }
+            if (enabled.length === 0) {
+                tdPerms.innerHTML = '<span class="perm-none">No Permissions</span>';
+            } else {
+                const permsDiv = document.createElement('div');
+                permsDiv.className = 'perm-badges';
+                enabled.forEach(p => {
+                    const badge = document.createElement('span');
+                    badge.className = 'perm-badge';
+                    badge.textContent = p;
+                    permsDiv.appendChild(badge);
+                });
+                tdPerms.appendChild(permsDiv);
+            }
+        }
+        tr.appendChild(tdPerms);
+        
+        // Rate limit column
+        const tdRate = document.createElement('td');
+        tdRate.className = 'col-rate';
+        const rateSpan = document.createElement('span');
+        rateSpan.className = 'rate-limit';
+        rateSpan.textContent = isAdminKey ? '∞' : (key.rate_limit === 0 ? '∞' : String(key.rate_limit || 100) + '/hr');
+        tdRate.appendChild(rateSpan);
+        tr.appendChild(tdRate);
+        
+        // Created column
+        const tdCreated = document.createElement('td');
+        tdCreated.className = 'col-created';
+        tdCreated.textContent = formatDate(key.created_at);
+        tr.appendChild(tdCreated);
+        
+        // Last used column
+        const tdUsed = document.createElement('td');
+        tdUsed.className = 'col-used';
+        if (key.last_used) {
+            tdUsed.textContent = formatDate(key.last_used);
+        } else {
+            tdUsed.innerHTML = '<span class="text-muted">Never</span>';
+        }
+        tr.appendChild(tdUsed);
+        
+        // Actions column
+        const tdActions = document.createElement('td');
+        tdActions.className = 'col-actions';
+        const actionsDiv = document.createElement('div');
+        actionsDiv.className = 'action-buttons';
+        
+        const canEdit = !isAdminKey;
+        
+        if (canEdit) {
+            const editBtn = document.createElement('button');
+            editBtn.className = 'btn btn-sm btn-primary';
+            editBtn.textContent = 'Edit';
+            editBtn.title = 'Edit this API key';
+            editBtn.onclick = () => editKey(Number(key.id), Number(permissionsBitmap), Number(key.rate_limit || 100));
+            actionsDiv.appendChild(editBtn);
+        } else {
+            const disabledBtn = document.createElement('button');
+            disabledBtn.className = 'btn btn-sm btn-disabled';
+            disabledBtn.disabled = true;
+            disabledBtn.textContent = "Can't edit admin key";
+            disabledBtn.title = 'Admin keys cannot be edited';
+            actionsDiv.appendChild(disabledBtn);
+        }
+        
+        const toggleBtn = document.createElement('button');
+        toggleBtn.className = `btn btn-sm ${key.is_active ? 'btn-warning' : 'btn-success'}`;
+        toggleBtn.textContent = key.is_active ? 'Deactivate' : 'Activate';
+        toggleBtn.title = key.is_active ? 'Deactivate this API key' : 'Activate this API key';
+        toggleBtn.onclick = () => toggleKey(Number(key.id));
+        actionsDiv.appendChild(toggleBtn);
+        
+        const deleteBtn = document.createElement('button');
+        deleteBtn.className = 'btn btn-sm btn-danger';
+        deleteBtn.textContent = 'Delete';
+        deleteBtn.title = 'Delete this API key permanently';
+        deleteBtn.onclick = () => deleteKey(Number(key.id), key.name);
+        actionsDiv.appendChild(deleteBtn);
+        
+        tdActions.appendChild(actionsDiv);
+        tr.appendChild(tdActions);
+        
+        tbody.appendChild(tr);
+    });
+    
+    table.appendChild(tbody);
     keysList.innerHTML = '';
     keysList.appendChild(table);
     updateBulkActions();
@@ -430,13 +516,27 @@ function showGeneratedKey(apiKey, permissions, rateLimit, isAdminKey) {
     generatedKey.textContent = apiKey;
     generatedKeySection.style.display = 'block';
     
-    let permDisplay, rateLimitText;
+    const infoText = generatedKeySection.querySelector('.info-text');
+    infoText.innerHTML = ''; // Clear existing content
+    
+    // Create elements using DOM methods for security
+    const typeLabel = document.createElement('strong');
+    typeLabel.textContent = 'Type:';
+    infoText.appendChild(typeLabel);
+    infoText.appendChild(document.createTextNode(' ' + (isAdminKey ? 'Admin Key' : 'Regular API Key')));
+    infoText.appendChild(document.createElement('br'));
+    
+    const permLabel = document.createElement('strong');
+    permLabel.textContent = 'Permissions:';
+    infoText.appendChild(permLabel);
+    infoText.appendChild(document.createTextNode(' '));
     
     if (isAdminKey || permissions === -1) {
-        permDisplay = '<strong style="color: var(--warning-color);">FULL ACCESS (Admin Key)</strong>';
-        rateLimitText = 'unlimited';
+        const adminSpan = document.createElement('strong');
+        adminSpan.style.color = 'var(--warning-color)';
+        adminSpan.textContent = 'FULL ACCESS (Admin Key)';
+        infoText.appendChild(adminSpan);
     } else {
-        // Decode bitmap to display enabled permissions
         const permNames = [
             'Generate-Secret',
             'Add Repository',
@@ -448,18 +548,23 @@ function showGeneratedKey(apiKey, permissions, rateLimit, isAdminKey) {
         for (let i = 0; i < permNames.length; i++) {
             if ((permissions & (1 << i)) !== 0) enabled.push(permNames[i]);
         }
-        permDisplay = enabled.length ? enabled.join(', ') : 'No Access';
-        rateLimitText = rateLimit === 0 ? 'unlimited' : `${rateLimit} requests/hour`;
+        infoText.appendChild(document.createTextNode(enabled.length ? enabled.join(', ') : 'No Access'));
     }
+    infoText.appendChild(document.createElement('br'));
     
-    // Update the info text to show permissions and rate limit
-    const infoText = generatedKeySection.querySelector('.info-text');
-    infoText.innerHTML = `
-        <strong>Type:</strong> ${isAdminKey ? 'Admin Key' : 'Regular API Key'}<br>
-        <strong>Permissions:</strong> ${permDisplay}<br>
-        <strong>Rate Limit:</strong> ${rateLimitText}<br>
-        Use this key in the Authorization header: <code>Authorization: Bearer YOUR_API_KEY</code>
-    `;
+    const rateLabel = document.createElement('strong');
+    rateLabel.textContent = 'Rate Limit:';
+    infoText.appendChild(rateLabel);
+    infoText.appendChild(document.createTextNode(' '));
+    
+    const rateLimitText = (isAdminKey || rateLimit === 0) ? 'unlimited' : String(rateLimit) + ' requests/hour';
+    infoText.appendChild(document.createTextNode(rateLimitText));
+    infoText.appendChild(document.createElement('br'));
+    
+    infoText.appendChild(document.createTextNode('Use this key in the Authorization header: '));
+    const codeEl = document.createElement('code');
+    codeEl.textContent = 'Authorization: Bearer YOUR_API_KEY';
+    infoText.appendChild(codeEl);
     
     // Scroll to the generated key
     generatedKeySection.scrollIntoView({ behavior: 'smooth', block: 'center' });
@@ -684,12 +789,16 @@ async function bulkAction(action) {
 // Edit Key
 function editKey(keyId, permissions, rateLimit) {
     document.getElementById('edit-key-id').value = keyId;
-    // Set checkboxes based on bitmap
+    // Set checkboxes based on bitmap (bits 0-8 for 9 permissions)
     document.getElementById('edit-perm-generate-secret').checked = (permissions & (1 << 0)) !== 0;
     document.getElementById('edit-perm-repositories-add').checked = (permissions & (1 << 1)) !== 0;
     document.getElementById('edit-perm-repositories-verify').checked = (permissions & (1 << 2)) !== 0;
     document.getElementById('edit-perm-repositories-update').checked = (permissions & (1 << 3)) !== 0;
     document.getElementById('edit-perm-repositories-delete').checked = (permissions & (1 << 4)) !== 0;
+    document.getElementById('edit-perm-events-list').checked = (permissions & (1 << 5)) !== 0;
+    document.getElementById('edit-perm-permissions-list').checked = (permissions & (1 << 6)) !== 0;
+    document.getElementById('edit-perm-permissions-calculate').checked = (permissions & (1 << 7)) !== 0;
+    document.getElementById('edit-perm-permissions-decode').checked = (permissions & (1 << 8)) !== 0;
     document.getElementById('edit-key-rate-limit').value = rateLimit;
     document.getElementById('edit-key-modal').style.display = 'block';
 }
@@ -704,13 +813,17 @@ document.getElementById('edit-key-form').addEventListener('submit', async (e) =>
     
     const keyId = document.getElementById('edit-key-id').value;
     
-    // Build bitmap from checkboxes
+    // Build bitmap from checkboxes (bits 0-8 for 9 permissions)
     let permissionsBitmap = 0;
     if (document.getElementById('edit-perm-generate-secret').checked) permissionsBitmap |= (1 << 0);
     if (document.getElementById('edit-perm-repositories-add').checked) permissionsBitmap |= (1 << 1);
     if (document.getElementById('edit-perm-repositories-verify').checked) permissionsBitmap |= (1 << 2);
     if (document.getElementById('edit-perm-repositories-update').checked) permissionsBitmap |= (1 << 3);
     if (document.getElementById('edit-perm-repositories-delete').checked) permissionsBitmap |= (1 << 4);
+    if (document.getElementById('edit-perm-events-list').checked) permissionsBitmap |= (1 << 5);
+    if (document.getElementById('edit-perm-permissions-list').checked) permissionsBitmap |= (1 << 6);
+    if (document.getElementById('edit-perm-permissions-calculate').checked) permissionsBitmap |= (1 << 7);
+    if (document.getElementById('edit-perm-permissions-decode').checked) permissionsBitmap |= (1 << 8);
     
     // Validate that at least one permission is selected
     if (permissionsBitmap === 0) {
@@ -951,11 +1064,22 @@ function displayLogs(logs) {
         return;
     }
     
-    logsContent.innerHTML = logs.slice().reverse().map(log => {
+    // Clear existing content
+    logsContent.innerHTML = '';
+    
+    // Use DOM methods instead of innerHTML for security
+    logs.slice().reverse().forEach(log => {
         const level = extractLogLevel(log);
         const loggerName = extractLoggerName(log);
-        return `<div class="log-line ${level}" data-level="${level}" data-logger="${loggerName}">${escapeHtml(log)}</div>`;
-    }).join('');
+        
+        const logDiv = document.createElement('div');
+        logDiv.className = `log-line ${level}`;
+        logDiv.setAttribute('data-level', level);
+        logDiv.setAttribute('data-logger', loggerName);
+        logDiv.textContent = log; // Use textContent for safety
+        
+        logsContent.appendChild(logDiv);
+    });
 }
 
 function extractLogLevel(logLine) {
@@ -1048,12 +1172,15 @@ async function downloadLogs() {
             const url = window.URL.createObjectURL(blob);
             const a = document.createElement('a');
             a.href = url;
-            const filename = currentLogFile || 'logs';
-            a.download = `${filename.replace('.log', '')}_${new Date().toISOString().split('T')[0]}.log`;
+            // Sanitize filename to prevent any potential issues
+            const safeFilename = (currentLogFile || 'logs').replace(/[^a-zA-Z0-9._-]/g, '_');
+            const downloadName = `${safeFilename.replace('.log', '')}_${new Date().toISOString().split('T')[0]}.log`;
+            a.setAttribute('download', downloadName); // Use setAttribute for safety
+            a.style.display = 'none';
             document.body.appendChild(a);
             a.click();
             window.URL.revokeObjectURL(url);
-            document.body.removeChild(a);
+            a.remove(); // Use remove() instead of removeChild
             resetSessionTimer();
         } else if (response.status === 401) {
             const data = await response.json();

@@ -6,6 +6,7 @@ that are not loaded from environment variables.
 """
 
 import os
+
 from dotenv import load_dotenv
 
 # Load environment variables from .env file
@@ -61,5 +62,5 @@ INVALID_PLACEHOLDERS = {
     "FLASK_SECRET_KEY": [
         "your-flask-secret-key-here",
         "your-secret-key-here",
-    ]
+    ],
 }

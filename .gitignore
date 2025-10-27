@@ -183,3 +183,6 @@ cython_debug/
 config.json
 /.vs
 .env.docker.tmp
+
+# Snyk Security Extension - AI Rules (auto-generated)
+.github\instructions\snyk_rules.instructions.md

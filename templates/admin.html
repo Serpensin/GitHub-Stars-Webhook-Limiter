@@ -4,6 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Admin Panel - GitHub Events Limiter</title>
+    <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
     <link rel="stylesheet" href="/static/style.css?v=2.3.0">
     <link rel="stylesheet" href="/static/admin.css?v=2.3.0">
 </head>
@@ -13,7 +14,9 @@
             <h1>🔐 Admin Panel</h1>
             <p>Manage API Keys for GitHub Events Limiter</p>
             <div style="text-align: right; margin-top: 10px;">
-                <a href="/" style="font-size: 0.9em;">← Back to Repository Management</a>
+                <a href="/" style="color: rgba(255,255,255,0.8); text-decoration: none; font-size: 0.9em; margin-right: 15px;">🏠 Home</a>
+                <a href="/docs" style="color: rgba(255,255,255,0.8); text-decoration: none; font-size: 0.9em; margin-right: 15px;">📚 API Docs</a>
+                <a href="/try" style="color: #ffd700; text-decoration: none; font-size: 0.9em; font-weight: 500;">🧪 Try API</a>
             </div>
         </header>
 
@@ -96,6 +99,22 @@
                                     <label class="permission-checkbox" title="Allow deleting repositories from the limiter">
                                         <input type="checkbox" id="perm-repositories-delete">
                                         <span>Delete Repository</span>
+                                    </label>
+                                    <label class="permission-checkbox" title="Allow listing available event types">
+                                        <input type="checkbox" id="perm-events-list">
+                                        <span>List Events</span>
+                                    </label>
+                                    <label class="permission-checkbox" title="Allow listing available permissions">
+                                        <input type="checkbox" id="perm-permissions-list">
+                                        <span>List Permissions</span>
+                                    </label>
+                                    <label class="permission-checkbox" title="Allow calculating permission bitmaps">
+                                        <input type="checkbox" id="perm-permissions-calculate">
+                                        <span>Calculate Permissions</span>
+                                    </label>
+                                    <label class="permission-checkbox" title="Allow decoding permission bitmaps">
+                                        <input type="checkbox" id="perm-permissions-decode">
+                                        <span>Decode Permissions</span>
                                     </label>
                                 </div>
                                 <small>Select permissions for each API endpoint (hover for details)</small>
@@ -208,6 +227,22 @@
                             <label class="permission-checkbox" title="Allow deleting repositories from the limiter">
                                 <input type="checkbox" id="edit-perm-repositories-delete">
                                 <span>Delete Repository</span>
+                            </label>
+                            <label class="permission-checkbox" title="Allow listing available event types">
+                                <input type="checkbox" id="edit-perm-events-list">
+                                <span>List Events</span>
+                            </label>
+                            <label class="permission-checkbox" title="Allow listing available permissions">
+                                <input type="checkbox" id="edit-perm-permissions-list">
+                                <span>List Permissions</span>
+                            </label>
+                            <label class="permission-checkbox" title="Allow calculating permission bitmaps">
+                                <input type="checkbox" id="edit-perm-permissions-calculate">
+                                <span>Calculate Permissions</span>
+                            </label>
+                            <label class="permission-checkbox" title="Allow decoding permission bitmaps">
+                                <input type="checkbox" id="edit-perm-permissions-decode">
+                                <span>Decode Permissions</span>
                             </label>
                         </div>
                     </div>

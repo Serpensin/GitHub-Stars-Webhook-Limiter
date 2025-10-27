@@ -127,9 +127,10 @@ def test_invalid_api_key():
     print("TEST 6: API access with invalid key (should fail)")
     print("="*70)
     
+    # NOTE: Using a fake/invalid API key for testing invalid authentication
     response = requests.get(
         f"{BASE_URL}/api/generate-secret",
-        headers={"Authorization": "Bearer invalid_key_12345"}
+        headers={"Authorization": "Bearer invalid_key_12345"}  # Test-only invalid key
     )
     print(f"Status: {response.status_code}")
     print(f"Response: {response.json()}")

@@ -1,16 +1,32 @@
 // Tab switching
-function showTab(tabName) {
+function showTab(tabName, clickEvent) {
     // Hide all tabs
     document.querySelectorAll('.tab-content').forEach(tab => {
-   tab.classList.remove('active');
+        tab.classList.remove('active');
     });
     document.querySelectorAll('.tab-button').forEach(button => {
         button.classList.remove('active');
     });
-  
-// Show selected tab
+    
+    // Show selected tab
     document.getElementById(`${tabName}-tab`).classList.add('active');
-    event.target.classList.add('active');
+    if (clickEvent && clickEvent.target) {
+        clickEvent.target.classList.add('active');
+    } else {
+        // If called programmatically, find and activate the button
+        document.querySelectorAll('.tab-button').forEach(button => {
+            if (button.getAttribute('onclick').includes(tabName)) {
+                button.classList.add('active');
+            }
+        });
+    }
+    
+    // Reset manage tab state when switching away
+    if (tabName === 'manage') {
+        document.getElementById('edit-section').style.display = 'none';
+        document.getElementById('verify-form').style.display = 'block';
+        document.getElementById('verify-form').reset();
+    }
     
     // Hide status message when switching tabs
     hideStatus();
@@ -134,48 +150,45 @@ document.getElementById('verify-form').addEventListener('submit', async (e) => {
     e.preventDefault();
     
     const repoUrl = document.getElementById('verify-repo-url').value.trim();
-const secret = document.getElementById('verify-secret').value.trim();
     const discordWebhook = document.getElementById('verify-discord-webhook').value.trim();
     
     try {
         showStatus('Verifying credentials...', 'info');
         
-      const response = await fetch('/api/repositories/verify', {
+        const response = await fetch('/api/repositories/verify', {
             method: 'POST',
-       headers: {
-     'Content-Type': 'application/json',
+            headers: {
+                'Content-Type': 'application/json',
                 'X-CSRF-Token': window.CSRF_TOKEN,
                 'X-Request-Time': Math.floor(Date.now() / 1000).toString(),
                 'X-Request-Nonce': generateNonce()
-     },
+            },
             body: JSON.stringify({
-         repo_url: repoUrl,
-      secret: secret,
-discord_webhook_url: discordWebhook
+                repo_url: repoUrl,
+                discord_webhook_url: discordWebhook
             })
         });
         
         const data = await response.json();
 
-   if (response.ok) {
+        if (response.ok) {
             showStatus(`✅ Repository verified: ${data.repo_full_name}`, 'success');
             
-      // Populate edit form
+            // Populate edit form
             document.getElementById('edit-repo-id').value = data.repo_id;
-      document.getElementById('edit-repo-name').value = data.repo_full_name;
-  document.getElementById('edit-old-secret').value = secret;
-  
+            document.getElementById('edit-repo-name').value = data.repo_full_name;
+            
             // Set enabled events
-     const events = data.enabled_events.split(',');
-        document.getElementById('edit-event-star').checked = events.includes('star');
-document.getElementById('edit-event-watch').checked = events.includes('watch');
+            const events = data.enabled_events.split(',');
+            document.getElementById('edit-event-star').checked = events.includes('star');
+            document.getElementById('edit-event-watch').checked = events.includes('watch');
             
             // Show edit section
             document.getElementById('edit-section').style.display = 'block';
-       document.getElementById('verify-form').style.display = 'none';
+            document.getElementById('verify-form').style.display = 'none';
         } else {
             showStatus(`❌ ${data.error}`, 'error');
- }
+        }
     } catch (error) {
         showStatus(`❌ Network error: ${error.message}`, 'error');
     }
