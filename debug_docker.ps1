@@ -56,7 +56,7 @@ Write-Host ""
 # Run with cleaned env file
 # Removed -it flag to prevent restart loop on validation errors
 try {
-    docker run --rm --env-file $tempEnvFile -v "${PWD}\GitHub_Events_Limiter:/app/GitHub_Events_Limiter" -p 5000:5000 github-events-limiter
+    docker run -t --rm --env-file $tempEnvFile -v "${PWD}\GitHub_Events_Limiter:/app/GitHub_Events_Limiter" -p 5000:5000 github-events-limiter
 }
 finally {
     Write-Host "`n=== Cleaning up ===" -ForegroundColor Cyan

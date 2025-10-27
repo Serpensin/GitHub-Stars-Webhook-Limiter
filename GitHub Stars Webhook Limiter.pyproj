@@ -25,7 +25,6 @@
     <Content Include=".env" />
     <Content Include=".env.example" />
     <Content Include=".github\workflows\docker-image.yml" />
-    <Content Include="debug_docker.bat" />
     <Content Include="docker-compose.yml" />
     <Content Include="Dockerfile" />
     <Content Include="README.md" />

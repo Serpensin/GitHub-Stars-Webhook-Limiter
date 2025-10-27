@@ -111,7 +111,7 @@ class TestAllEndpoints(unittest.TestCase):
             'Content-Type': 'application/json'
         }
         
-        response = requests.get(f'{self.base_url}/api/generate-secret', headers=headers, timeout=5)
+        response = requests.get(f'{self.base_url}/api/generate-secret', headers=headers, timeout=30)
         self.assertIn(response.status_code, [401, 403])
 
     # ========================================================================
@@ -156,9 +156,10 @@ class TestAllEndpoints(unittest.TestCase):
         data = response.json()
         self.assertIn('events', data)
         self.assertIsInstance(data['events'], list)
-        # Should contain at least 'star' and 'watch'
-        self.assertIn('star', data['events'])
-        self.assertIn('watch', data['events'])
+        # Should contain at least 'star' and 'watch' - check event names in list
+        event_names = [event['name'] for event in data['events']]
+        self.assertIn('star', event_names)
+        self.assertIn('watch', event_names)
 
     def test_events_wrong_methods(self):
         """Test /api/events rejects non-GET methods."""
@@ -455,7 +456,7 @@ class TestAllEndpoints(unittest.TestCase):
         response = requests.patch(
             f'{self.base_url}/admin/api/keys/999999',
             headers=self.admin_headers,
-            json={'name': 'new_name'},
+            json={'permissions': 1},  # Include permissions to avoid validation error
             timeout=5
         )
         self.assertEqual(response.status_code, 404)

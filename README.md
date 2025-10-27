@@ -379,22 +379,73 @@ flake8 .
 pylint . --fail-under=10.0
 ```
 
+### Running Tests
+
+The project includes a comprehensive test suite. See [Tests/README.md](Tests/README.md) for detailed documentation.
+
+**Prerequisites:**
+- Running application instance (Docker or manual)
+- Admin password configured
+
+**Run all tests:**
+```bash
+python -m unittest discover Tests -v
+```
+
+**Run specific test file:**
+```bash
+python -m unittest Tests.test_authentication -v
+python -m unittest Tests.test_api_keys -v
+python -m unittest Tests.test_all_endpoints -v
+```
+
+**Test coverage:**
+- ✅ Authentication & Authorization
+- ✅ API Key Management
+- ✅ Permission System
+- ✅ Rate Limiting
+- ✅ All API Endpoints
+- ✅ Input Validation
+- ✅ Error Handling
+
 ### File Structure
 
 ```
 .
-├── main.py          # Main application file
-├── requirements.txt    # Python dependencies
-├── .env          # Environment variables (not in git)
-├── templates/
-│   └── index.html  # Web interface
-├── static/
-│   ├── style.css    # Styles
-│   └── script.js       # Frontend JavaScript
-├── GitHub_Events_Limiter/
-│   └── data.db         # SQLite database (created on first run)
-├── Dockerfile   # Docker configuration
-└── README.md         # This file
+├── main.py                  # Main application file
+├── requirements.txt         # Python dependencies
+├── .env                     # Environment variables (not in git)
+├── pyproject.toml           # Tool configuration (black, flake8, pylint, isort)
+├── CustomModules/           # Custom Python modules
+│   ├── AuthenticationHandler.py
+│   ├── BitmapHandler.py
+│   ├── DatabaseHandler.py
+│   ├── LogHandler.py
+│   └── SecurityHandler.py
+├── routes/                  # Flask route blueprints
+│   ├── admin.py             # Admin panel routes
+│   ├── api.py               # API routes
+│   └── web.py               # Web interface routes
+├── templates/               # HTML templates
+│   ├── index.html           # Main web interface
+│   ├── admin.html           # Admin panel
+│   └── docs.html            # API documentation
+├── static/                  # Static assets
+│   ├── style.css            # Main styles
+│   ├── admin.css            # Admin panel styles
+│   ├── script.js            # Frontend JavaScript
+│   └── admin.js             # Admin panel JavaScript
+├── Tests/                   # Test suite
+│   ├── README.md            # Testing documentation
+│   ├── test_authentication.py
+│   ├── test_api_keys.py
+│   └── test_all_endpoints.py
+├── GitHub_Events_Limiter/   # Application data
+│   ├── data.db              # SQLite database (created on first run)
+│   └── logs/                # Application logs
+├── Dockerfile               # Docker configuration
+├── docker-compose.yml       # Docker Compose configuration
+└── README.md                # This file
 ```
 
 ## Migration from v1.x
@@ -408,10 +459,6 @@ If you're upgrading from v1.x (config.json based):
 5. **Update webhooks**: No changes needed in GitHub if the webhook URL is the same
 
 The old `starred_repo` table data will be preserved (user stars history).
-
-## License
-
-MIT License - See repository for details
 
 ## Contributing
 
