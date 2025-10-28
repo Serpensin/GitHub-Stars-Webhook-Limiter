@@ -1091,7 +1091,7 @@ paths:
                     example: 42
                   name:
                     type: string
-                    example: "Production API Key"
+                    example: "Production Key"
                   permissions:
                     type: integer
                     example: 31

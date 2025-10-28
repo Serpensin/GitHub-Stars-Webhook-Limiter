@@ -225,3 +225,16 @@ class DatabaseHandler:
         if hasattr(self._local, "connection") and self._local.connection is not None:
             self._local.connection.close()
             self._local.connection = None
+
+    def checkpoint_wal(self):
+        """Run a WAL checkpoint to flush all changes to the main .db file."""
+        try:
+            conn = sqlite3.connect(self.db_path, check_same_thread=False)
+            conn.execute("PRAGMA wal_checkpoint(FULL);")
+            conn.close()
+            if self.logger:
+                self.logger.info("WAL checkpoint completed and changes flushed to .db file.")
+        except Exception as e:
+            if self.logger:
+                self.logger.error(f"Error running WAL checkpoint: {e}")
+            raise

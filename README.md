@@ -250,46 +250,6 @@ python -c "from argon2 import PasswordHasher; ph = PasswordHasher(); print(ph.ha
 
 **Note:** Use `python generate_required_secrets.py` to generate all required secrets including the admin password hash.
 
-## Database Schema
-
-### repositories Table
-```sql
-CREATE TABLE repositories (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-    repo_id INTEGER NOT NULL UNIQUE,
-    repo_full_name TEXT NOT NULL,
-  owner_id INTEGER NOT NULL,
-    secret_encrypted TEXT NOT NULL,
-    discord_webhook_url TEXT NOT NULL,
-    enabled_events TEXT NOT NULL,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-)
-```
-
-### user_events Table
-```sql
-CREATE TABLE user_events (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    github_user_id INTEGER NOT NULL,
-    repository_id INTEGER NOT NULL,
-    event_type TEXT NOT NULL,
-    UNIQUE(github_user_id, repository_id, event_type)
-)
-```
-
-### api_keys Table
-```sql
-CREATE TABLE api_keys (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    key_hash TEXT NOT NULL UNIQUE,
-    name TEXT NOT NULL,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    last_used TIMESTAMP,
-    is_active INTEGER DEFAULT 1
-)
-```
-
 ## Managing Repositories
 
 ### Update Configuration

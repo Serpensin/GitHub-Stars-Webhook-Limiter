@@ -19,22 +19,6 @@ Tests the authentication and authorization system:
 
 **Run:** `python -m unittest Tests.test_authentication -v`
 
-### test_api_keys.py
-Comprehensive tests for API key management:
-- ✅ API key creation with various permission combinations
-- ✅ Permission validation and enforcement
-- ✅ Rate limit configuration and enforcement
-- ✅ Admin key creation (full access)
-- ✅ Key activation/deactivation
-- ✅ Key deletion
-- ✅ Bulk operations (activate, deactivate, delete multiple keys)
-- ✅ Permission bitmap validation (0-511 range for 9 permissions)
-- ✅ Name validation (max 16 characters, alphanumeric + space/hyphen/underscore)
-
-**Run:** `python -m unittest Tests.test_api_keys -v`
-
-**Note:** Some tests (rate limit enforcement) can take a long time due to concurrent request testing.
-
 ### test_all_endpoints.py
 Tests all API endpoints for proper behavior:
 - ✅ All API routes (GET, POST, PATCH, DELETE)
@@ -88,7 +72,6 @@ python -m unittest discover Tests -v
 ### Run Specific Test File
 ```bash
 python -m unittest Tests.test_authentication -v
-python -m unittest Tests.test_api_keys -v
 python -m unittest Tests.test_all_endpoints -v
 ```
 

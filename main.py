@@ -314,7 +314,8 @@ class SignalHandler:
             # Close all database connections in DatabaseHandler
             logger.info("Closing database connections...")
             db_handler.close_all_connections()
-            logger.info("Database connections closed")
+            db_handler.checkpoint_wal()
+            logger.info("Database WAL checkpoint completed and connections closed")
 
             # Note: Periodic tasks run in daemon threads and will stop automatically
             logger.info("Periodic tasks will stop automatically (daemon threads)")
