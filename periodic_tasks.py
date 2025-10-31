@@ -87,18 +87,20 @@ class PeriodicTaskManager:
             one_hour_ago = int(time.time()) - 3600
 
             # Delete entries where first request was more than 1 hour ago
-            # Using DatabaseHandler with commit=True
-            deleted_count = self.db_handler.execute(
+            # DatabaseHandler is now SyncDatabaseHandler which handles async internally
+            result = self.db_handler.execute(
                 """
                 DELETE FROM api_rate_limit_tracking
                 WHERE first_request_time < ?
                 """,
                 (one_hour_ago,),
                 commit=True,
-                fetch=False,
+                fetch=False,  # Get rowcount for DELETE
             )
 
-            if deleted_count and deleted_count > 0:
+            # result should be the rowcount (int) when fetch=False
+            deleted_count = result if isinstance(result, int) else 0
+            if deleted_count > 0:
                 logger.info(f"Cleaned up {deleted_count} expired rate limit entries")
             else:
                 logger.debug("No expired rate limit entries to clean up")

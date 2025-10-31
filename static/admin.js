@@ -1068,7 +1068,8 @@ function displayLogs(logs) {
     logsContent.innerHTML = '';
     
     // Use DOM methods instead of innerHTML for security
-    logs.slice().reverse().forEach(log => {
+    // Logs are already in reverse chronological order from backend (newest first)
+    logs.forEach(log => {
         const level = extractLogLevel(log);
         const loggerName = extractLoggerName(log);
         

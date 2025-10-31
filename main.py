@@ -311,11 +311,15 @@ class SignalHandler:
         logger.info(f"Received {signal_name}, initiating graceful shutdown...")
 
         try:
+            # Run WAL checkpoint before closing connections
+            logger.info("Running database WAL checkpoint...")
+            db_handler.checkpoint_wal()
+            logger.info("Database WAL checkpoint completed")
+            
             # Close all database connections in DatabaseHandler
             logger.info("Closing database connections...")
             db_handler.close_all_connections()
-            db_handler.checkpoint_wal()
-            logger.info("Database WAL checkpoint completed and connections closed")
+            logger.info("Database connections closed")
 
             # Note: Periodic tasks run in daemon threads and will stop automatically
             logger.info("Periodic tasks will stop automatically (daemon threads)")
