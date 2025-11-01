@@ -569,7 +569,7 @@ def send_discord_notification(webhook_url: str, event_data: dict, event_type: st
                         "icon_url": event_data["sender"]["avatar_url"],
                         "url": event_data["sender"]["html_url"],
                     },
-                    "title": (f"[{repo_name}] " f"New {event_names.get(event_type, event_type)}"),
+                    "title": f"[{repo_name}] New {event_names.get(event_type, event_type)}",
                     "url": event_data["repository"]["html_url"],
                     "color": event_colors.get(event_type, 0x1ABC9C),
                     "footer": {"text": f"GitHub {event_type.capitalize()} Event"},
