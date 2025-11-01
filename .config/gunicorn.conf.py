@@ -30,7 +30,7 @@ sys.path.insert(0, config_dir)
 import config as app_config
 
 # Import our custom LogHandler to integrate Gunicorn logs
-from CustomModules.LogHandler import LogManager
+from CustomModules.log_handler import LogManager
 
 # Initialize LogManager for Gunicorn
 os.makedirs(app_config.LOG_FOLDER, exist_ok=True)
