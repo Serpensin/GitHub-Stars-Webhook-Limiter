@@ -25,7 +25,7 @@ COPY .config/ ./.config/
 COPY routes/ ./routes/
 COPY templates/ ./templates/
 COPY static/ ./static/
-COPY CustomModules/ ./CustomModules/
+COPY modules/ ./modules/
 
 # Copy License and README
 COPY LICENSE.txt .

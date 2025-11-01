@@ -1,0 +1,39 @@
+[MASTER]
+ignore=.venv,venv,.env,env,__pycache__
+ignore-paths=\.venv,venv,\.env,env,__pycache__
+ignore-patterns=.*[\\\/]\.venv[\\\/].*,.*[\\\/]venv[\\\/].*,.*[\\\/]\.env[\\\/].*,.*[\\\/]env[\\\/].*,.*[\\\/]__pycache__[\\\/].*,.*site-packages.*
+
+[FORMAT]
+max-line-length=100
+
+[MESSAGES CONTROL]
+disable=
+    logging-fstring-interpolation,
+    line-too-long,
+    too-many-lines,
+    wrong-import-position,
+    broad-exception-caught,
+    invalid-name,
+    missing-module-docstring,
+    missing-class-docstring,
+    missing-function-docstring,
+    too-few-public-methods,
+    too-many-arguments,
+    too-many-positional-arguments,
+    too-many-locals,
+    too-many-return-statements,
+    too-many-branches,
+    too-many-statements,
+    too-many-instance-attributes,
+    no-else-return,
+    unused-argument,
+    global-statement,
+    import-outside-toplevel,
+    import-error,
+    duplicate-code,
+    unnecessary-pass,
+    consider-using-with,
+    bare-except,
+    unused-import,
+    unspecified-encoding,
+    possibly-used-before-assignment

@@ -84,12 +84,17 @@ disable = [
 ]
 
 [tool.pylint.main]
+# Note: When running pylint, use specific paths instead of '.' to avoid scanning virtual environments
+# Example: python -m pylint *.py routes
+ignore = [
+    ".venv",
+    "venv",
+    ".env",
+    "env",
+    "Tests",
+    "GitHub_Events_Limiter",
+    "__pycache__",
+]
 ignore-paths = [
-    "^env/.*$",
-    "^\\.env/.*$",
-    "^\\.venv/.*$",
-    "^venv/.*$",
-    "^Tests/.*$",
-    "^GitHub_Events_Limiter/.*$",
-    "^.*/__pycache__/.*$",
+    ".*site-packages.*",
 ]

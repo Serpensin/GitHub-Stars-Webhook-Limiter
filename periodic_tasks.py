@@ -17,8 +17,8 @@ Usage:
 import threading
 import time
 
-from CustomModules.DatabaseHandler import DatabaseHandler
-from CustomModules.LogHandler import LogManager
+from CustomModules.database_handler import SyncDatabaseHandler
+from CustomModules.log_handler import LogManager
 
 
 class PeriodicTaskManager:
@@ -32,7 +32,10 @@ class PeriodicTaskManager:
     """
 
     def __init__(
-        self, db_handler: DatabaseHandler, log_manager: LogManager, log_name: str = "periodic_tasks"
+        self,
+        db_handler: SyncDatabaseHandler,
+        log_manager: LogManager,
+        log_name: str = "periodic_tasks",
     ):
         """
         Initialize the periodic task manager.

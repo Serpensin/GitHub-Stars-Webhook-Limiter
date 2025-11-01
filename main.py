@@ -33,11 +33,11 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".config"))
 
 import config  # type: ignore  # config is in .config folder, added to path above
 
-from CustomModules.AuthenticationHandler import AuthenticationHandler
-from CustomModules.BitmapHandler import BitmapHandler
-from CustomModules.DatabaseHandler import DatabaseHandler
-from CustomModules.LogHandler import LogManager
-from CustomModules.SecurityHandler import SecurityHandler
+from CustomModules.bitmap_handler import BitmapHandler
+from CustomModules.database_handler import SyncDatabaseHandler
+from CustomModules.log_handler import LogManager
+from modules.AuthenticationHandler import AuthenticationHandler
+from modules.SecurityHandler import SecurityHandler
 from periodic_tasks import PeriodicTaskManager
 
 load_dotenv()
@@ -134,6 +134,8 @@ if missing_vars or invalid_vars:
 ENCRYPTION_KEY = os.environ.get("ENCRYPTION_KEY")
 logger.info("Encryption key loaded and validated")
 
+# At this point ENCRYPTION_KEY is guaranteed to be non-None due to validation above
+assert ENCRYPTION_KEY is not None, "ENCRYPTION_KEY should have been validated"
 cipher_suite = Fernet(
     ENCRYPTION_KEY.encode() if isinstance(ENCRYPTION_KEY, str) else ENCRYPTION_KEY
 )
@@ -145,6 +147,9 @@ logger.info("CSRF protection enabled via session tokens")
 # Initialize admin password hash
 ADMIN_PASSWORD_HASH = os.environ.get("ADMIN_PASSWORD_HASH")
 logger.info("Admin password hash loaded from environment")
+
+# At this point ADMIN_PASSWORD_HASH is guaranteed to be non-None due to validation above
+assert ADMIN_PASSWORD_HASH is not None, "ADMIN_PASSWORD_HASH should have been validated"
 
 # Initialize password hasher for API keys and admin auth
 ph = PasswordHasher()
@@ -181,7 +186,7 @@ db_path = os.path.join(config.APP_NAME, "data.db")
 logger.info(f"Initializing database at {db_path}")
 
 # Create DatabaseHandler instance for centralized database operations
-db_handler = DatabaseHandler(db_path, logger)
+db_handler = SyncDatabaseHandler(db_path, logger)
 
 # Initialize database schema
 try:
@@ -315,7 +320,7 @@ class SignalHandler:
             logger.info("Running database WAL checkpoint...")
             db_handler.checkpoint_wal()
             logger.info("Database WAL checkpoint completed")
-            
+
             # Close all database connections in DatabaseHandler
             logger.info("Closing database connections...")
             db_handler.close_all_connections()
