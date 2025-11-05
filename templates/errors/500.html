@@ -1,0 +1,11 @@
+{% extends "errors/base_error.html" %}
+
+{% set error_code = "500" %}
+{% set error_title = "Internal Server Error" %}
+{% set error_emoji = "💥" %}
+{% set error_description = "Something went wrong on our end. Our team has been notified and we're working on fixing it." %}
+
+{% block action_buttons %}
+<a href="javascript:location.reload()" class="btn btn-primary">🔄 Try Again</a>
+<a href="/" class="btn btn-secondary">🏠 Go Home</a>
+{% endblock %}

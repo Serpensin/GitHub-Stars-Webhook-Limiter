@@ -1,0 +1,11 @@
+{% extends "errors/base_error.html" %}
+
+{% set error_code = "401" %}
+{% set error_title = "Authentication Required" %}
+{% set error_emoji = "🔐" %}
+{% set error_description = "You need to be authenticated to access this resource. Please log in and try again." %}
+
+{% block action_buttons %}
+<a href="/admin" class="btn btn-primary">🔑 Login</a>
+<a href="/" class="btn btn-secondary">🏠 Go Home</a>
+{% endblock %}

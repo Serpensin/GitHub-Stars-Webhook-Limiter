@@ -51,9 +51,9 @@ class SecurityHandler:
 
         # Initialize logger
         if logger is None:
-            self.logger = logging.getLogger("custommodules.securityhandler")
+            self.logger = logging.getLogger("modules.securityhandler")
         else:
-            self.logger = logger.getChild("custommodules.securityhandler")
+            self.logger = logger.getChild("modules.securityhandler")
 
     def encrypt_secret(self, secret: str) -> str:
         """

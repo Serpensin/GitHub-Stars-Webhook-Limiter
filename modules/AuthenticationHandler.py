@@ -39,7 +39,7 @@ from functools import wraps
 from typing import Callable, Tuple
 
 from argon2.exceptions import VerifyMismatchError
-from flask import g, jsonify, request, session
+from flask import g, jsonify, request, session, make_response
 
 
 class AuthenticationHandler:
@@ -75,9 +75,9 @@ class AuthenticationHandler:
 
         # Initialize logger
         if logger is None:
-            self.logger = logging.getLogger("custommodules.authenticationhandler")
+            self.logger = logging.getLogger("modules.authenticationhandler")
         else:
-            self.logger = logger.getChild("custommodules.authenticationhandler")
+            self.logger = logger.getChild("modules.authenticationhandler")
 
     def hash_api_key(self, api_key: str) -> str:
         """
@@ -323,7 +323,7 @@ class AuthenticationHandler:
 
                     # Ensure response is a Response object
                     if not hasattr(response, "headers"):
-                        response = jsonify(response) if not isinstance(response, str) else response
+                        response = make_response(response)
 
                     # Add rate limit header if we have a rate limit and response has headers
                     if g.api_key_rate_limit > 0 and hasattr(response, "headers"):
@@ -404,19 +404,106 @@ class AuthenticationHandler:
 
                 # Browser fingerprinting - detect session hijacking
                 user_agent = request.headers.get("User-Agent", "")
-                stored_ua = session.get("user_agent")
 
-                if stored_ua and stored_ua != user_agent:
-                    if self.logger:
-                        self.logger.warning(
-                            "API route access denied: "
-                            "User-Agent changed (possible session hijacking) from %s",
-                            request.remote_addr,
+                # Support multiple recent user-agents per session to allow small
+                # legitimate differences (e.g. browser minor updates or opening
+                # the same session in a second window). Migrate existing
+                # `user_agent` single-value to `user_agents` list for backward
+                # compatibility.
+                user_agents = session.get("user_agents")
+                if user_agents is None and session.get("user_agent"):
+                    user_agents = [session.get("user_agent")]
+
+                # Helper: determine whether two UAs are "compatible" — same
+                # OS and browser family and close major versions (<=1 diff).
+                def _ua_compatible(old: str, new: str) -> bool:
+                    import re
+
+                    if not old or not new:
+                        return False
+
+                    # Simple OS token check
+                    os_tokens = [
+                        r"Windows NT",
+                        r"Macintosh",
+                        r"Android",
+                        r"Linux",
+                        r"iPhone",
+                        r"iPad",
+                    ]
+                    old_os = next((t for t in os_tokens if t in old), None)
+                    new_os = next((t for t in os_tokens if t in new), None)
+                    if old_os != new_os:
+                        return False
+
+                    # Browser family + major version
+                    def _find_browser_and_major(s: str):
+                        # Order matters — Edge may include Chrome token too
+                        patterns = [
+                            r"Edg/(\d+)",
+                            r"Chrome/(\d+)",
+                            r"Firefox/(\d+)",
+                            r"OPR/(\d+)",
+                            r"Version/(\d+).+Safari",
+                        ]
+                        for p in patterns:
+                            m = re.search(p, s)
+                            if m:
+                                # family derived from pattern name
+                                family = p.split("/")[0].replace("\\", "")
+                                try:
+                                    return family, int(m.group(1))
+                                except Exception:
+                                    return family, None
+                        return None, None
+
+                    old_family, old_ver = _find_browser_and_major(old)
+                    new_family, new_ver = _find_browser_and_major(new)
+                    if old_family and new_family and old_family == new_family:
+                        if old_ver is None or new_ver is None:
+                            return True
+                        try:
+                            return abs(old_ver - new_ver) <= 1
+                        except Exception:
+                            return True
+
+                    # Fallback: require that both strings contain a shared token
+                    # like 'Chrome' or 'Safari'
+                    tokens = ["Chrome", "Safari", "Edg", "Firefox", "OPR", "Android"]
+                    shared = any(tok in old and tok in new for tok in tokens)
+                    return bool(shared)
+
+                # If we have a list of allowed UAs, accept if the incoming one is
+                # already known or compatible with an existing one. Otherwise,
+                # record it (keeping a short history) or block.
+                if user_agents:
+                    # exact match
+                    if user_agent in user_agents:
+                        # incoming UA already allowed — refresh history cap
+                        session["user_agents"] = user_agents[-5:]
+                    else:
+                        # check compatibility with any existing UA
+                        compatible = any(
+                            _ua_compatible(str(ua), user_agent) for ua in user_agents
                         )
-                    return jsonify({"error": "Session validation failed"}), 403
-
-                if not stored_ua:
-                    session["user_agent"] = user_agent
+                        if compatible:
+                            # add this UA to the allowed list (cap history to 5)
+                            user_agents.append(user_agent)
+                            session["user_agents"] = user_agents[-5:]
+                        else:
+                            if self.logger:
+                                stored_display = user_agents[0] if user_agents else ""
+                                self.logger.warning(
+                                    "API route access denied: UA changed - "
+                                    "stored='%s' curr='%s' from %s",
+                                    stored_display,
+                                    user_agent,
+                                    request.remote_addr,
+                                )
+                            return jsonify({"error": "Session validation failed"}), 403
+                else:
+                    # No UA recorded yet; initialize list with current UA
+                    session["user_agents"] = [user_agent]
 
                 if self.logger:
                     self.logger.debug("API route access granted: valid CSRF token")
@@ -458,20 +545,18 @@ class AuthenticationHandler:
                                 g.api_key_id,
                             )
                         return f(*args, **kwargs)
-                    else:
-                        if self.logger:
-                            self.logger.warning(
-                                "Admin route access denied: API key is not an admin key from %s",
-                                request.remote_addr,
-                            )
-                        return jsonify({"error": "Admin access required"}), 403
-                else:
-                    if self.logger:
+                    elif self.logger:
                         self.logger.warning(
-                            "Admin route access denied: invalid API key from %s",
+                            "Admin route access denied: API key is not an admin key from %s",
                             request.remote_addr,
                         )
-                    return jsonify({"error": "Invalid API key"}), 401
+                    return jsonify({"error": "Admin access required"}), 403
+                elif self.logger:
+                    self.logger.warning(
+                        "Admin route access denied: invalid API key from %s",
+                        request.remote_addr,
+                    )
+                return jsonify({"error": "Invalid API key"}), 401
 
             # Check for session-based admin auth
             if not session.get("admin_authenticated"):

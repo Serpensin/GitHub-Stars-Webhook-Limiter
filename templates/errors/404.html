@@ -1,0 +1,11 @@
+{% extends "errors/base_error.html" %}
+
+{% set error_code = "404" %}
+{% set error_title = "Page Not Found" %}
+{% set error_emoji = "🔍" %}
+{% set error_description = "The page you're looking for doesn't exist. It might have been moved or deleted." %}
+
+{% block action_buttons %}
+<a href="/" class="btn btn-primary">🏠 Go Home</a>
+<a href="/docs" class="btn btn-secondary">📚 View Docs</a>
+{% endblock %}

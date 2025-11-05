@@ -15,6 +15,7 @@ Main features:
 
 import os
 import re
+import secrets
 import signal
 import sqlite3
 
@@ -27,17 +28,20 @@ import sentry_sdk
 from argon2 import PasswordHasher
 from cryptography.fernet import Fernet
 from dotenv import load_dotenv
-from flask import Flask, g
+from flask import Flask, g, render_template
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".config"))
 
 import config  # type: ignore  # config is in .config folder, added to path above
 
 from CustomModules.bitmap_handler import BitmapHandler
-from CustomModules.database_handler import SyncDatabaseHandler
+from CustomModules.database_handler import SQLiteDatabaseHandler
 from CustomModules.log_handler import LogManager
 from modules.AuthenticationHandler import AuthenticationHandler
+from modules.DiscordHandler import DiscordHandler
+from modules.GitHubHandler import GitHubHandler
 from modules.SecurityHandler import SecurityHandler
+from modules.StatisticsHandler import StatisticsHandler
 from periodic_tasks import PeriodicTaskManager
 
 load_dotenv()
@@ -173,6 +177,13 @@ else:
 app = Flask(__name__)
 app.secret_key = os.environ.get("FLASK_SECRET_KEY")
 logger.info("Flask secret key loaded from environment")
+
+# Generate internal server secret for internal-only routes (login/logout)
+# This prevents external access to admin login/logout endpoints
+# Only the admin panel HTML page will have access to this secret
+INTERNAL_SERVER_SECRET = secrets.token_urlsafe(32)
+logger.info("Internal server secret generated for admin panel routes")
+
 logger.info(f"Flask application '{config.APP_NAME}' v{config.APP_VERSION} starting up")
 
 # Track server start time to invalidate all previous admin sessions
@@ -183,10 +194,10 @@ os.makedirs(config.APP_NAME, exist_ok=True)
 
 # Initialize database path and handler
 db_path = os.path.join(config.APP_NAME, "data.db")
-logger.info(f"Initializing database at {db_path}")
+logger.info(f"Initializing database at {os.path.abspath(db_path)}")
 
 # Create DatabaseHandler instance for centralized database operations
-db_handler = SyncDatabaseHandler(db_path, logger)
+db_handler = SQLiteDatabaseHandler(db_path, logger)
 
 # Initialize database schema
 try:
@@ -220,7 +231,10 @@ try:
             discord_webhook_url TEXT NOT NULL,
             enabled_events TEXT NOT NULL,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            last_event_received TIMESTAMP,
+            last_repo_checked TIMESTAMP,
+            last_webhook_checked TIMESTAMP
         )
         """,
         commit=True,
@@ -264,6 +278,50 @@ try:
     )
     logger.debug("api_rate_limit_tracking table created/verified")
 
+    # Table for tracking when periodic cleanup tasks last ran
+    db_handler.execute(
+        """
+        CREATE TABLE IF NOT EXISTS cleanup_tasks (
+            task_name TEXT PRIMARY KEY,
+            last_run TIMESTAMP NOT NULL
+        )
+        """,
+        commit=True,
+        fetch=False,
+    )
+    logger.debug("cleanup_tasks table created/verified")
+
+    # Table for storing cumulative statistics
+    db_handler.execute(
+        """
+        CREATE TABLE IF NOT EXISTS statistics (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            stat_name TEXT NOT NULL UNIQUE,
+            stat_value INTEGER DEFAULT 0,
+            last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+        """,
+        commit=True,
+        fetch=False,
+    )
+    logger.debug("statistics table created/verified")
+
+    # Table for per-user event statistics
+    db_handler.execute(
+        """
+        CREATE TABLE IF NOT EXISTS user_statistics (
+            github_user_id INTEGER PRIMARY KEY,
+            github_username TEXT,
+            valid_events INTEGER DEFAULT 0,
+            invalid_events INTEGER DEFAULT 0,
+            last_event_timestamp TIMESTAMP
+        )
+        """,
+        commit=True,
+        fetch=False,
+    )
+    logger.debug("user_statistics table created/verified")
+
     logger.info("Database initialization completed successfully")
 except Exception as e:
     logger.critical(f"Database initialization failed: {e}")
@@ -272,7 +330,13 @@ except Exception as e:
 # Initialize periodic task manager but don't start it yet
 # It will be started by Gunicorn's post_fork hook (only in one worker)
 # or by the if __name__ == "__main__" block for direct execution
-task_manager = PeriodicTaskManager(db_handler=db_handler, log_manager=log_manager)
+# Note: send_discord_notification is defined later, but we pass it now (late binding)
+task_manager = PeriodicTaskManager(
+    db_handler=db_handler,
+    log_manager=log_manager,
+    send_discord_notification=lambda *args, **kwargs: send_discord_notification(*args, **kwargs),
+    db_path=db_path,
+)
 logger.info("Periodic task manager initialized (not started yet)")
 
 
@@ -323,7 +387,7 @@ class SignalHandler:
 
             # Close all database connections in DatabaseHandler
             logger.info("Closing database connections...")
-            db_handler.close_all_connections()
+            db_handler.close()
             logger.info("Database connections closed")
 
             # Note: Periodic tasks run in daemon threads and will stop automatically
@@ -397,18 +461,8 @@ def close_db(exception=None):  # pylint: disable=unused-argument
 # Permissions Bitmap Setup
 # ============================================================================
 
-# Define all route permissions here (add as needed)
-PERMISSION_KEYS = [
-    "generate-secret",  # bit 0, value 1
-    "repositories-add",  # bit 1, value 2
-    "repositories-verify",  # bit 2, value 4
-    "repositories-update",  # bit 3, value 8
-    "repositories-delete",  # bit 4, value 16
-    "events-list",  # bit 5, value 32
-    "permissions-list",  # bit 6, value 64
-    "permissions-calculate",  # bit 7, value 128
-    "permissions-decode",  # bit 8, value 256
-]
+# Use centralized permission configuration from config.py
+PERMISSION_KEYS = config.PERMISSION_KEYS
 bitmap_handler = BitmapHandler(PERMISSION_KEYS, logger)
 
 # ============================================================================
@@ -428,162 +482,63 @@ auth_handler = AuthenticationHandler(
     logger=logger,
 )
 
-# Create wrapper functions for backward compatibility with existing code
-encrypt_secret = security_handler.encrypt_secret
-decrypt_secret = security_handler.decrypt_secret
-verify_secret = security_handler.verify_secret
-verify_github_signature = security_handler.verify_github_signature
+# Initialize statistics handler for metrics tracking
+stats_handler = StatisticsHandler(
+    get_db_func=get_db,
+    logger=logger,
+)
 
-hash_api_key = auth_handler.hash_api_key
-verify_api_key = auth_handler.verify_api_key
-check_api_key_in_db = auth_handler.check_api_key_in_db
-verify_admin_password = auth_handler.verify_admin_password
-check_rate_limit = auth_handler.check_rate_limit
-check_api_key_permission = auth_handler.check_api_key_permission
-require_api_key_or_csrf = auth_handler.require_api_key_or_csrf
-require_admin_auth = auth_handler.require_admin_auth
+# Initialize Discord handler for webhook notifications
+discord_handler = DiscordHandler(logger=logger)
+
+# Initialize GitHub handler for repository operations
+github_handler = GitHubHandler(logger=logger)
 
 logger.info("Security and authentication handlers initialized")
 
 
+# ============================================================================
+# Discord and GitHub Helper Functions (delegate to handlers)
+# ============================================================================
+
+
 def verify_discord_webhook(webhook_url: str) -> bool:
-    """
-    Verifies that a Discord webhook URL is valid and active.
-
-    Args:
-        webhook_url (str): The Discord webhook URL to verify.
-
-    Returns:
-        bool: True if the webhook is valid and active, False otherwise.
-    """
-    try:
-        logger.debug(f"Verifying Discord webhook: {webhook_url[:50]}...")
-        response = requests.get(webhook_url, timeout=5)
-        if response.status_code == 200:
-            logger.debug("Discord webhook verification successful")
-            return True
-        logger.warning(f"Discord webhook verification failed: HTTP {response.status_code}")
-        return False
-    except requests.RequestException as e:
-        logger.error(f"Discord webhook verification error: {e}")
-        return False
+    """Delegate to DiscordHandler for webhook verification."""
+    return discord_handler.verify_webhook(webhook_url)
 
 
 def extract_repo_info_from_url(repo_url: str) -> tuple[str, str] | None:
-    """
-    Extracts owner and repo name from a GitHub repository URL.
-
-    Args:
-        repo_url (str): The GitHub repository URL.
-
-    Returns:
-        tuple[str, str] | None: A tuple of (owner, repo) or None if invalid.
-    """
-    try:
-        # Remove trailing slashes and .git
-        repo_url = repo_url.rstrip("/").rstrip(".git")
-
-        # Handle various GitHub URL formats
-        if "github.com/" in repo_url:
-            parts = repo_url.split("github.com/")[-1].split("/")
-            if len(parts) >= 2:
-                logger.debug(f"Extracted repo info: {parts[0]}/{parts[1]}")
-                return parts[0], parts[1]
-    except Exception as e:  # pylint: disable=broad-exception-caught
-        logger.error(f"Failed to extract repo info from URL '{repo_url}': {e}")
-
-    logger.warning(f"Invalid GitHub repository URL: {repo_url}")
-    return None
+    """Delegate to GitHubHandler for URL parsing."""
+    return github_handler.extract_repo_info_from_url(repo_url)
 
 
 def fetch_repo_data_from_github(owner: str, repo: str) -> dict | None:
-    """
-    Fetches repository data from GitHub API.
-
-    Args:
-        owner (str): The repository owner.
-        repo (str): The repository name.
-
-    Returns:
-        dict | None: Repository data including repo_id and owner_id, or None if error.
-    """
-    try:
-        logger.debug(f"Fetching repository data from GitHub: {owner}/{repo}")
-        response = requests.get(
-            f"https://api.github.com/repos/{owner}/{repo}",
-            headers={"Accept": "application/vnd.github.v3+json"},
-            timeout=5,
-        )
-
-        if response.status_code == 200:
-            data = response.json()
-            logger.info(
-                f"Successfully fetched GitHub repo data: {data['full_name']} (ID: {data['id']})"
-            )
-            return {
-                "repo_id": data["id"],
-                "repo_full_name": data["full_name"],
-                "owner_id": data["owner"]["id"],
-            }
-        logger.warning(f"Failed to fetch GitHub repo data: HTTP {response.status_code}")
-    except requests.RequestException as e:
-        logger.error(f"GitHub API request failed for {owner}/{repo}: {e}")
-
-    return None
+    """Delegate to GitHubHandler for repository data fetching."""
+    return github_handler.fetch_repo_data(owner, repo)
 
 
-def send_discord_notification(webhook_url: str, event_data: dict, event_type: str) -> bool:
-    """
-    Sends a notification to Discord about a new GitHub event.
+def send_discord_notification(
+    webhook_url: str,
+    event_data: dict | None = None,
+    event_type: str = "",
+    cleanup_type: str = "",
+    repo_name: str = "",
+    reason: str = "",
+) -> bool:
+    """Delegate to DiscordHandler for notification sending."""
+    return discord_handler.send_notification(
+        webhook_url=webhook_url,
+        event_data=event_data,
+        event_type=event_type,
+        cleanup_type=cleanup_type,
+        repo_name=repo_name,
+        reason=reason,
+    )
 
-    Args:
-        webhook_url (str): The Discord webhook URL.
-        event_data (dict): The GitHub event payload.
-        event_type (str): The event type (star or watch).
 
-    Returns:
-        bool: True if successful, False otherwise.
-    """
-    try:
-        event_names = {"star": "star added", "watch": "watcher added"}
-
-        event_colors = {
-            "star": 0xFFC107,  # Amber for stars
-            "watch": 0x1ABC9C,  # Teal for watches
-        }
-
-        user_login = event_data["sender"]["login"]
-        repo_name = event_data["repository"]["full_name"]
-
-        logger.info(
-            f"Sending Discord notification: {event_type} event by {user_login} on {repo_name}"
-        )
-
-        payload = {
-            "username": "GitHub Events Bot",
-            "avatar_url": "https://cdn-icons-png.flaticon.com/512/616/616489.png",
-            "embeds": [
-                {
-                    "author": {
-                        "name": user_login,
-                        "icon_url": event_data["sender"]["avatar_url"],
-                        "url": event_data["sender"]["html_url"],
-                    },
-                    "title": f"[{repo_name}] New {event_names.get(event_type, event_type)}",
-                    "url": event_data["repository"]["html_url"],
-                    "color": event_colors.get(event_type, 0x1ABC9C),
-                    "footer": {"text": f"GitHub {event_type.capitalize()} Event"},
-                }
-            ],
-        }
-
-        response = requests.post(webhook_url, json=payload, timeout=5)
-        response.raise_for_status()
-        logger.info(f"Discord notification sent successfully: {event_type} by {user_login}")
-        return True
-    except (KeyError, requests.RequestException) as e:
-        logger.error(f"Failed to send Discord notification: {e}")
-        return False
+# ============================================================================
+# Database Helper Functions
+# ============================================================================
 
 
 def has_user_triggered_event_before(
@@ -677,26 +632,127 @@ route_helpers = {
     "logger": logger,
     "get_db": get_db,
     "get_repository_by_id": get_repository_by_id,
-    "decrypt_secret": decrypt_secret,
-    "verify_github_signature": verify_github_signature,
+    "decrypt_secret": security_handler.decrypt_secret,
+    "verify_github_signature": security_handler.verify_github_signature,
     "has_user_triggered_event_before": has_user_triggered_event_before,
     "send_discord_notification": send_discord_notification,
     "add_user_event": add_user_event,
-    "require_api_key_or_csrf": require_api_key_or_csrf,
+    "require_api_key_or_csrf": auth_handler.require_api_key_or_csrf,
     "extract_repo_info_from_url": extract_repo_info_from_url,
     "fetch_repo_data_from_github": fetch_repo_data_from_github,
     "verify_discord_webhook": verify_discord_webhook,
-    "encrypt_secret": encrypt_secret,
-    "verify_secret": verify_secret,
-    "require_admin_auth": require_admin_auth,
-    "verify_admin_password": verify_admin_password,
-    "hash_api_key": hash_api_key,
+    "encrypt_secret": security_handler.encrypt_secret,
+    "verify_secret": security_handler.verify_secret,
+    "require_admin_auth": auth_handler.require_admin_auth,
+    "verify_admin_password": auth_handler.verify_admin_password,
+    "hash_api_key": auth_handler.hash_api_key,
     "bitmap_handler": bitmap_handler,
+    "increment_stat": stats_handler.increment_stat,
+    "get_stat": stats_handler.get_stat,
+    "get_all_stats": stats_handler.get_all_stats,
+    "get_top_users": stats_handler.get_top_users,
+    "internal_server_secret": INTERNAL_SERVER_SECRET,
 }
 
 # Register all route blueprints (web, api, admin)
 register_blueprints(app, route_helpers)
 logger.info("Route blueprints registered successfully")
+
+
+# ============================================================================
+# Custom Error Handlers
+# ============================================================================
+
+
+@app.errorhandler(400)
+def bad_request(e):
+    """Handle 400 Bad Request errors."""
+    return render_template("errors/400.html"), 400
+
+
+@app.errorhandler(401)
+def unauthorized(e):
+    """Handle 401 Unauthorized errors."""
+    return render_template("errors/401.html"), 401
+
+
+@app.errorhandler(403)
+def forbidden(e):
+    """Handle 403 Forbidden errors."""
+    return render_template("errors/403.html"), 403
+
+
+@app.errorhandler(404)
+def not_found(e):
+    """Handle 404 Not Found errors."""
+    return render_template("errors/404.html"), 404
+
+
+@app.errorhandler(405)
+def method_not_allowed(e):
+    """Handle 405 Method Not Allowed errors."""
+    return render_template("errors/405.html"), 405
+
+
+@app.errorhandler(429)
+def too_many_requests(e):
+    """Handle 429 Too Many Requests errors."""
+    return render_template("errors/429.html"), 429
+
+
+@app.errorhandler(500)
+def internal_server_error(e):
+    """Handle 500 Internal Server Error."""
+    logger.error(f"Internal Server Error: {str(e)}", exc_info=True)
+    return render_template("errors/500.html"), 500
+
+
+@app.errorhandler(502)
+def bad_gateway(e):
+    """Handle 502 Bad Gateway errors."""
+    return render_template("errors/502.html"), 502
+
+
+@app.errorhandler(503)
+def service_unavailable(e):
+    """Handle 503 Service Unavailable errors."""
+    return render_template("errors/503.html"), 503
+
+
+@app.errorhandler(Exception)
+def handle_unexpected_error(e):
+    """Catch-all handler for unexpected errors."""
+    logger.error(f"Unexpected error: {str(e)}", exc_info=True)
+    return render_template("errors/500.html"), 500
+
+
+# ============================================================================
+# Global Favicon Route
+# ============================================================================
+
+
+@app.route("/favicon.ico")
+@app.route("/favicon.svg")
+def favicon():
+    """
+    Serves the favicon globally for all pages.
+    This centralizes favicon handling - browsers will automatically request this.
+    Supports both /favicon.ico (default browser request) and /favicon.svg.
+    """
+    from flask import send_from_directory
+
+    return send_from_directory(
+        os.path.join(app.root_path, "static"),
+        "favicon.svg",
+        mimetype="image/svg+xml",
+    )
+
+
+# ============================================================================
+# Application Entry Point
+# ============================================================================
+# Application Entry Point
+# ============================================================================
 
 
 if __name__ == "__main__":
@@ -705,5 +761,4 @@ if __name__ == "__main__":
     logger.info("Periodic tasks started (direct execution mode)")
 
     logger.info(f"Starting {config.APP_NAME} v{config.APP_VERSION} on port 5000")
-    # Debug mode disabled for production security
-    app.run(host="0.0.0.0", port=5000, debug=False)
+    app.run(host="0.0.0.0", port=5000, debug=True)

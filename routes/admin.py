@@ -3,21 +3,32 @@ Admin Panel Routes
 
 Admin authentication and management routes:
 - /admin: Admin panel page
-- /admin/api/login: Admin authentication
-- /admin/api/logout: Admin logout
 - /admin/api/keys: API key management (list, create)
 - /admin/api/keys/<key_id>: API key operations (delete, toggle, update)
 - /admin/api/keys/bulk: Bulk API key operations
 - /admin/api/logs: Log file viewing and management
+
+Internal-only routes (not publicly accessible via API):
+- admin_login(): Admin authentication (called internally by admin panel)
+- admin_logout(): Admin logout (called internally by admin panel)
 """
 
 import os
 import secrets
 import sqlite3
+import sys
 import time
 from functools import wraps
+from pathlib import Path
+from typing import Any, Callable, Optional
 
 from flask import Blueprint, jsonify, render_template, request, send_file, session
+
+# Import config module
+config_path = Path(__file__).parent.parent / ".config"
+if str(config_path) not in sys.path:
+    sys.path.insert(0, str(config_path))
+import config  # type: ignore  # noqa: E402
 
 admin_bp = Blueprint("admin", __name__, url_prefix="/admin")
 
@@ -27,11 +38,13 @@ ERROR_FILE_ERROR = "File operation error occurred"
 ERROR_API_KEY_NOT_FOUND = "API key not found"
 
 # These will be set by main.py when registering blueprints
-logger = None
-_require_admin_auth = None  # Store the actual decorator
-verify_admin_password = None
-hash_api_key = None
-get_db = None
+logger: Optional[Any] = None
+_require_admin_auth: Optional[Callable] = None  # Store the actual decorator
+verify_admin_password: Optional[Callable[[str], bool]] = None
+hash_api_key: Optional[Callable[[str], str]] = None
+get_db: Optional[Callable[[], Any]] = None
+increment_stat: Optional[Callable[[str], None]] = None
+internal_server_secret: Optional[str] = None  # Secret for internal-only routes
 
 
 def require_admin_auth(f):
@@ -39,7 +52,42 @@ def require_admin_auth(f):
 
     @wraps(f)
     def wrapper(*args, **kwargs):
+        assert _require_admin_auth is not None
         return _require_admin_auth(f)(*args, **kwargs)
+
+    return wrapper
+
+
+def require_internal_secret(f):
+    """
+    Decorator to require the internal server secret for internal-only routes.
+    This prevents external access to admin login/logout endpoints.
+    Only the admin panel HTML page has access to this secret.
+    """
+
+    @wraps(f)
+    def wrapper(*args, **kwargs):
+        import hmac
+
+        # Check for internal secret in X-Internal-Secret header
+        provided_secret = request.headers.get("X-Internal-Secret")
+
+        if not provided_secret or not internal_server_secret:
+            if logger:
+                logger.warning(
+                    f"Internal route access denied: missing secret from {request.remote_addr}"
+                )
+            return jsonify({"error": "Access denied"}), 403
+
+        # Constant-time comparison to prevent timing attacks
+        if not hmac.compare_digest(provided_secret, internal_server_secret):
+            if logger:
+                logger.warning(
+                    f"Internal route access denied: invalid secret from {request.remote_addr}"
+                )
+            return jsonify({"error": "Access denied"}), 403
+
+        return f(*args, **kwargs)
 
     return wrapper
 
@@ -50,87 +98,106 @@ def init_admin_routes(
     _verify_admin_password,
     _hash_api_key,
     _get_db,
+    _increment_stat=None,
+    _internal_server_secret=None,
 ):
     """Initialize route dependencies"""
-    global logger, _require_admin_auth, verify_admin_password, hash_api_key, get_db
+    global logger, _require_admin_auth, verify_admin_password, hash_api_key, get_db, increment_stat, internal_server_secret
 
     logger = _logger
     _require_admin_auth = _require_admin_auth_func
     verify_admin_password = _verify_admin_password
     hash_api_key = _hash_api_key
     get_db = _get_db
+    increment_stat = _increment_stat
+    internal_server_secret = _internal_server_secret
+    increment_stat = _increment_stat
 
 
 @admin_bp.route("", methods=["GET"])
 def admin_page():
     """
-    Serves the admin panel page.
+    Serves the admin panel page with embedded internal server secret.
+    The secret is used to authenticate internal-only routes (login/logout).
     """
-    logger.debug(f"Admin page accessed from {request.remote_addr}")
-    return render_template("admin.html")
+    if logger:
+        logger.debug(f"Admin page accessed from {request.remote_addr}")
+    return render_template("admin.html", internal_secret=internal_server_secret)
 
 
+# Internal-only route - not documented in OpenAPI, used only by admin panel UI
 @admin_bp.route("/api/login", methods=["POST"])
+@require_internal_secret
 def admin_login():
     """
     Authenticates admin user with password.
-    Returns session information for programmatic access.
+    
+    INTERNAL USE ONLY: This endpoint is not part of the public API documentation.
+    It is used exclusively by the admin panel UI at /admin for session management.
+    
+    For API access with admin privileges, use an admin API key instead.
     """
     from flask import make_response
+
+    # Ensure dependencies are initialized
+    assert verify_admin_password is not None
 
     data = request.get_json()
     password = data.get("password")
 
     if not password:
-        logger.warning("Admin login failed: no password provided from %s", request.remote_addr)
+        if logger:
+            logger.warning("Admin login failed: no password provided from %s", request.remote_addr)
         return jsonify({"error": "Password required"}), 400
 
     if verify_admin_password(password):
         session["admin_authenticated"] = True
         session["admin_login_time"] = int(time.time())
         session.permanent = True  # Use Flask's permanent session (31 days by default)
-        logger.info("Admin login successful from %s", request.remote_addr)
+        if logger:
+            logger.info("Admin login successful from %s", request.remote_addr)
 
         # Get the session interface to access the serializer
         from flask import current_app
 
         session_interface = current_app.session_interface
 
-        # Create a temporary response to get the session cookie value
-        temp_response = make_response()
-        session_interface.save_session(current_app, session, temp_response)
-
-        # Extract the session cookie value from Set-Cookie header
-        session_cookie_value = None
-        for header_name, header_value in temp_response.headers:
-            if header_name.lower() == "set-cookie" and header_value.startswith("session="):
-                # Extract cookie value (between = and ;)
-                session_cookie_value = header_value.split("=", 1)[1].split(";", 1)[0]
-                break
-
-        # Create response with session cookie information
-        response_data = {
-            "message": "Login successful",
-            "session_cookie_name": "session",
-            "session_cookie_value": session_cookie_value,
-        }
-
-        response = make_response(jsonify(response_data), 200)
+        # Create response and save the session into it so the Set-Cookie header is sent
+        response = make_response(jsonify({"message": "Login successful"}), 200)
+        # Persist the session cookie on the real response so browser stores it automatically
+        session_interface.save_session(current_app, session, response)
         return response
 
-    logger.warning("Admin login failed: invalid password from %s", request.remote_addr)
+    if logger:
+        logger.warning("Admin login failed: invalid password from %s", request.remote_addr)
     return jsonify({"error": "Invalid password"}), 401
 
 
+# Internal-only route - not documented in OpenAPI, used only by admin panel UI
 @admin_bp.route("/api/logout", methods=["POST"])
+@require_internal_secret
 def admin_logout():
     """
     Logs out admin user.
+    
+    INTERNAL USE ONLY: This endpoint is not part of the public API documentation.
+    It is used exclusively by the admin panel UI at /admin for session management.
     """
     session.pop("admin_authenticated", None)
     session.pop("admin_login_time", None)
-    logger.info("Admin logout from %s", request.remote_addr)
+    if logger:
+        logger.info("Admin logout from %s", request.remote_addr)
     return jsonify({"message": "Logged out successfully"}), 200
+
+
+@admin_bp.route("/api/permissions", methods=["GET"])
+@require_admin_auth
+def admin_get_permissions():
+    """
+    Returns the centralized permission configuration for the admin panel.
+    This ensures the UI always matches the backend configuration.
+    """
+    return jsonify({"permissions": config.PERMISSIONS}), 200
 
 
 @admin_bp.route("/api/keys", methods=["GET"])
@@ -139,6 +206,7 @@ def admin_list_keys():
     """
     Lists all API keys (without sensitive data).
     """
+    assert get_db is not None
     db = get_db()
     cursor = db.cursor()
     cursor.execute(
@@ -150,7 +218,8 @@ def admin_list_keys():
     )
     keys = cursor.fetchall()
 
-    logger.info("Admin: Listed %s API keys", len(keys))
+    if logger:
+        logger.info("Admin: Listed %s API keys", len(keys))
     return (
         jsonify(
             {
@@ -212,7 +281,8 @@ def admin_create_key():
     if is_admin_key:
         permissions_value = -1  # Use -1 for full access
         rate_limit = 0  # Unlimited for admin keys
-        logger.info("Creating admin API key (unrestricted access)")
+        if logger:
+            logger.info("Creating admin API key (unrestricted access)")
     else:
         # Validate bitmap integer
         try:
@@ -230,10 +300,10 @@ def admin_create_key():
                     ),
                     400,
                 )
-            # Validate bitmap is within valid range (0-511 for 9 permissions: bits 0-8)
-            if permissions_value > 511:
+            # Validate bitmap is within valid range
+            if permissions_value > config.MAX_PERMISSION_VALUE:
                 return (
-                    jsonify({"error": "Invalid permissions bitmap (valid range: 1-511)"}),
+                    jsonify({"error": "Invalid permissions bitmap (out of range)"}),
                     400,
                 )
         except (ValueError, TypeError):
@@ -248,9 +318,11 @@ def admin_create_key():
 
     # Generate a new API key
     api_key = secrets.token_urlsafe(32)
+    assert hash_api_key is not None
     key_hash = hash_api_key(api_key)
 
     # Store in database
+    assert get_db is not None
     db = get_db()
     try:
         cursor = db.cursor()
@@ -260,14 +332,20 @@ def admin_create_key():
             (key_hash, name, permissions_value, rate_limit, 1 if is_admin_key else 0),
         )
         key_id = cursor.lastrowid
-        logger.info(
-            "Admin: Created new %sAPI key (ID: %s, Name: %s, Permissions: %s, Rate limit: %s)",
-            "admin " if is_admin_key else "",
-            key_id,
-            name,
-            permissions_value,
-            rate_limit,
-        )
+
+        # Increment total API keys statistic
+        if increment_stat:
+            increment_stat("total_api_keys")
+
+        if logger:
+            logger.info(
+                "Admin: Created new %sAPI key (ID: %s, Name: %s, Permissions: %s, Rate limit: %s)",
+                "admin " if is_admin_key else "",
+                key_id,
+                name,
+                permissions_value,
+                rate_limit,
+            )
 
         # Return the plaintext key (only time it's shown)
         return (
@@ -285,7 +363,8 @@ def admin_create_key():
             201,
         )
     except sqlite3.Error as e:
-        logger.error("Admin: Database error creating API key: %s", e)
+        if logger:
+            logger.error("Admin: Database error creating API key: %s", e)
         return jsonify({"error": ERROR_DATABASE}), 500
 
 
@@ -295,6 +374,7 @@ def admin_delete_key(key_id):
     """
     Deletes an API key.
     """
+    assert get_db is not None
     db = get_db()
     try:
         cursor = db.cursor()
@@ -305,10 +385,12 @@ def admin_delete_key(key_id):
             return jsonify({"error": ERROR_API_KEY_NOT_FOUND}), 404
 
         db.execute("DELETE FROM api_keys WHERE id = ?", (key_id,))
-        logger.info("Admin: Deleted API key (ID: %s, Name: %s)", key_id, key["name"])
+        if logger:
+            logger.info("Admin: Deleted API key (ID: %s, Name: %s)", key_id, key["name"])
         return jsonify({"message": "API key deleted successfully"}), 200
     except sqlite3.Error as e:
-        logger.error("Admin: Database error deleting API key %s: %s", key_id, e)
+        if logger:
+            logger.error("Admin: Database error deleting API key %s: %s", key_id, e)
         return jsonify({"error": ERROR_DATABASE}), 500
 
 
@@ -318,6 +400,7 @@ def admin_toggle_key(key_id):
     """
     Toggles an API key between active and inactive.
     """
+    assert get_db is not None
     db = get_db()
     try:
         cursor = db.cursor()
@@ -331,9 +414,13 @@ def admin_toggle_key(key_id):
         db.execute("UPDATE api_keys SET is_active = ? WHERE id = ?", (new_status, key_id))
 
         status_text = "activated" if new_status else "deactivated"
-        logger.info(
-            "Admin: %s API key (ID: %s, Name: %s)", status_text.capitalize(), key_id, key["name"]
-        )
+        if logger:
+            logger.info(
+                "Admin: %s API key (ID: %s, Name: %s)",
+                status_text.capitalize(),
+                key_id,
+                key["name"],
+            )
         return (
             jsonify(
                 {"message": f"API key {status_text} successfully", "is_active": bool(new_status)}
@@ -341,7 +428,8 @@ def admin_toggle_key(key_id):
             200,
         )
     except sqlite3.Error as e:
-        logger.error("Admin: Database error toggling API key %s: %s", key_id, e)
+        if logger:
+            logger.error("Admin: Database error toggling API key %s: %s", key_id, e)
         return jsonify({"error": ERROR_DATABASE}), 500
 
 
@@ -359,6 +447,7 @@ def admin_update_key(key_id):
     if permissions is None and rate_limit is None:
         return jsonify({"error": "At least one field (permissions or rate_limit) required"}), 400
 
+    assert get_db is not None
     db = get_db()
     try:
         cursor = db.cursor()
@@ -419,10 +508,12 @@ def admin_update_key(key_id):
 
         db.execute(query, tuple(values))
 
-        logger.info("Admin: Updated API key (ID: %s, Name: %s)", key_id, key["name"])
+        if logger:
+            logger.info("Admin: Updated API key (ID: %s, Name: %s)", key_id, key["name"])
         return jsonify({"message": "API key updated successfully"}), 200
     except sqlite3.Error as e:
-        logger.error("Admin: Database error updating API key %s: %s", key_id, e)
+        if logger:
+            logger.error("Admin: Database error updating API key %s: %s", key_id, e)
         return jsonify({"error": ERROR_DATABASE}), 500
 
 
@@ -450,6 +541,7 @@ def admin_bulk_action():
             400,
         )
 
+    assert get_db is not None
     db = get_db()
     try:
         cursor = db.cursor()
@@ -464,6 +556,7 @@ def admin_bulk_action():
             return jsonify({"error": f"API keys not found: {list(missing)}"}), 404
 
         # Perform action
+        message = ""  # Initialize message to avoid unbound variable warning
         if action == "delete":
             db.execute(f"DELETE FROM api_keys WHERE id IN ({placeholders})", key_ids)
             message = f"Deleted {len(key_ids)} API key(s)"
@@ -473,10 +566,12 @@ def admin_bulk_action():
         elif action == "deactivate":
             db.execute(f"UPDATE api_keys SET is_active = 0 WHERE id IN ({placeholders})", key_ids)
             message = f"Deactivated {len(key_ids)} API key(s)"
-        logger.info("Admin: Bulk %s on %d API keys: %s", action, len(key_ids), key_ids)
+        if logger:
+            logger.info("Admin: Bulk %s on %d API keys: %s", action, len(key_ids), key_ids)
         return jsonify({"message": message, "affected_keys": len(key_ids)}), 200
     except sqlite3.Error as e:
-        logger.error("Admin: Database error in bulk action: %s", e)
+        if logger:
+            logger.error("Admin: Database error in bulk action: %s", e)
         return jsonify({"error": ERROR_DATABASE}), 500
 
 
@@ -486,11 +581,12 @@ def admin_list_log_files():
     """
     Lists all available log files (current and rotated).
     """
-    import config  # type: ignore  # imported here to avoid import order issues
+    # config is imported at module level
 
     try:
         if not os.path.exists(config.LOG_FOLDER):
-            logger.warning("Admin: Log folder not found")
+            if logger:
+                logger.warning("Admin: Log folder not found")
             return jsonify({"files": []}), 200
 
         # Get all log files in the folder
@@ -506,10 +602,12 @@ def admin_list_log_files():
         # Sort by modification time (newest first)
         log_files.sort(key=lambda x: x["modified"], reverse=True)
 
-        logger.info("Admin: Listed %d log files", len(log_files))
+        if logger:
+            logger.info("Admin: Listed %d log files", len(log_files))
         return jsonify({"files": log_files}), 200
     except Exception as e:
-        logger.error("Admin: Error listing log files: %s", e)
+        if logger:
+            logger.error("Admin: Error listing log files: %s", e)
         return jsonify({"error": ERROR_FILE_ERROR}), 500
 
 
@@ -523,7 +621,7 @@ def admin_get_logs():
     - lines: number of lines to retrieve (default: 1000, max: 10000)
     - file: log file name (default: current log file)
     """
-    import config  # type: ignore  # imported here to avoid import order issues
+    # config is imported at module level
 
     try:
         # Get requested log file name or use default
@@ -537,7 +635,8 @@ def admin_get_logs():
         log_file_path = os.path.join(config.LOG_FOLDER, log_filename)
 
         if not os.path.exists(log_file_path):
-            logger.warning("Admin: Log file not found: %s", log_filename)
+            if logger:
+                logger.warning("Admin: Log file not found: %s", log_filename)
             return jsonify({"logs": [], "message": "Log file not found", "loggers": []}), 200
 
         # Read the last N lines from the log file
@@ -570,12 +669,13 @@ def admin_get_logs():
             except Exception:
                 pass
 
-        logger.debug(
-            "Admin: Retrieved %d log lines from %s with %d unique loggers",
-            len(logs),
-            log_filename,
-            len(loggers),
-        )
+        if logger:
+            logger.debug(
+                "Admin: Retrieved %d log lines from %s with %d unique loggers",
+                len(logs),
+                log_filename,
+                len(loggers),
+            )
         return (
             jsonify(
                 {
@@ -590,7 +690,8 @@ def admin_get_logs():
             200,
         )
     except Exception as e:
-        logger.error("Admin: Error reading logs: %s", e)
+        if logger:
+            logger.error("Admin: Error reading logs: %s", e)
         return jsonify({"error": ERROR_FILE_ERROR}), 500
 
 
@@ -602,7 +703,7 @@ def admin_download_logs():
     Query params:
     - file: log file name (default: current log file)
     """
-    import config  # type: ignore  # imported here to avoid import order issues
+    # config is imported at module level
 
     try:
         # Get requested log file name or use default
@@ -616,10 +717,12 @@ def admin_download_logs():
         log_file_path = os.path.join(config.LOG_FOLDER, log_filename)
 
         if not os.path.exists(log_file_path):
-            logger.warning("Admin: Log file not found for download: %s", log_filename)
+            if logger:
+                logger.warning("Admin: Log file not found for download: %s", log_filename)
             return jsonify({"error": "Log file not found"}), 404
 
-        logger.info("Admin: Downloading log file: %s", log_filename)
+        if logger:
+            logger.info("Admin: Downloading log file: %s", log_filename)
         download_name = f"{log_filename.replace('.log', '')}_{time.strftime('%Y%m%d_%H%M%S')}.log"
         return send_file(
             log_file_path,
@@ -628,5 +731,6 @@ def admin_download_logs():
             mimetype="text/plain",
         )
     except Exception as e:
-        logger.error("Admin: Error downloading logs: %s", e)
+        if logger:
+            logger.error("Admin: Error downloading logs: %s", e)
         return jsonify({"error": ERROR_FILE_ERROR}), 500

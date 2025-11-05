@@ -1,0 +1,11 @@
+{% extends "errors/base_error.html" %}
+
+{% set error_code = "502" %}
+{% set error_title = "Bad Gateway" %}
+{% set error_emoji = "🔌" %}
+{% set error_description = "We're having trouble connecting to our upstream services. Please try again in a few moments." %}
+
+{% block action_buttons %}
+<a href="javascript:location.reload()" class="btn btn-primary">🔄 Try Again</a>
+<a href="/" class="btn btn-secondary">🏠 Go Home</a>
+{% endblock %}

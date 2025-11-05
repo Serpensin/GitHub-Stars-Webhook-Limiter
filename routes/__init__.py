@@ -31,6 +31,10 @@ def register_blueprints(app: Flask, helpers: dict):
         helpers["has_user_triggered_event_before"],
         helpers["send_discord_notification"],
         helpers["add_user_event"],
+        helpers["get_db"],
+        helpers["increment_stat"],
+        helpers["get_all_stats"],
+        helpers["get_top_users"],
     )
 
     # Initialize API routes
@@ -45,6 +49,9 @@ def register_blueprints(app: Flask, helpers: dict):
         helpers["get_repository_by_id"],
         helpers["verify_secret"],
         helpers["bitmap_handler"],
+        helpers["increment_stat"],
+        helpers["get_all_stats"],
+        helpers["get_top_users"],
     )
 
     # Initialize admin routes
@@ -54,6 +61,8 @@ def register_blueprints(app: Flask, helpers: dict):
         helpers["verify_admin_password"],
         helpers["hash_api_key"],
         helpers["get_db"],
+        helpers["increment_stat"],
+        helpers["internal_server_secret"],
     )
 
     # Register blueprints

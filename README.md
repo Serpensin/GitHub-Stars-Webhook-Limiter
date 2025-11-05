@@ -214,7 +214,7 @@ The application requires three secrets to be set before starting:
 **Generate all secrets at once:**
 
 ```bash
-python generate_required_secrets.py
+python ./scripts/generate_required_secrets.py
 ```
 
 The script will:
@@ -336,7 +336,7 @@ pip install flake8-pyproject
 flake8 .
 
 # Run static analysis
-pylint . --fail-under=10.0
+pylint *.py routes modules --fail-under=10.0
 ```
 
 ### Running Tests

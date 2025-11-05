@@ -58,21 +58,47 @@ async function generateSecret(inputId) {
 }
 
 // Generate a unique nonce for each request (prevents replay attacks)
+// Use crypto.getRandomValues when available for better randomness than Math.random()
 function generateNonce() {
+    try {
+        if (window.crypto && window.crypto.getRandomValues) {
+            const arr = new Uint32Array(4);
+            window.crypto.getRandomValues(arr);
+            return Array.from(arr).map(n => n.toString(36)).join('') + Date.now().toString(36);
+        }
+    } catch (e) {
+        // Fall back to Math.random if crypto is unavailable
+    }
     return Math.random().toString(36).substring(2) + Date.now().toString(36);
 }
 
 // Copy to clipboard
-function copyToClipboard(inputId) {
+async function copyToClipboard(inputId) {
     const input = document.getElementById(inputId);
-    if (!input.value) {
-   showStatus('No secret to copy!', 'error');
-      return;
+    if (!input || !input.value) {
+        showStatus('No secret to copy!', 'error');
+        return;
     }
-    
+
+    // Prefer modern Clipboard API when available
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+        try {
+            await navigator.clipboard.writeText(input.value);
+            showStatus('Secret copied to clipboard!', 'success');
+            return;
+        } catch (e) {
+            // fallback to execCommand below
+        }
+    }
+
+    // Fallback for older browsers
     input.select();
-    document.execCommand('copy');
-    showStatus('Secret copied to clipboard!', 'success');
+    try {
+        document.execCommand('copy');
+        showStatus('Secret copied to clipboard!', 'success');
+    } catch (e) {
+        showStatus('Copy not supported in this browser', 'error');
+    }
 }
 
 // Show status message
@@ -95,7 +121,9 @@ function hideStatus() {
 }
 
 // Add repository form submission
-document.getElementById('add-form').addEventListener('submit', async (e) => {
+const addForm = document.getElementById('add-form');
+if (addForm) {
+    addForm.addEventListener('submit', async (e) => {
     e.preventDefault();
     
     const repoUrl = document.getElementById('add-repo-url').value.trim();
@@ -143,10 +171,13 @@ document.getElementById('add-form').addEventListener('submit', async (e) => {
     } catch (error) {
  showStatus(`❌ Network error: ${error.message}`, 'error');
     }
-});
+    });
+}
 
 // Verify repository form submission
-document.getElementById('verify-form').addEventListener('submit', async (e) => {
+const verifyForm = document.getElementById('verify-form');
+if (verifyForm) {
+    verifyForm.addEventListener('submit', async (e) => {
     e.preventDefault();
     
     const repoUrl = document.getElementById('verify-repo-url').value.trim();
@@ -192,10 +223,13 @@ document.getElementById('verify-form').addEventListener('submit', async (e) => {
     } catch (error) {
         showStatus(`❌ Network error: ${error.message}`, 'error');
     }
-});
+    });
+}
 
 // Edit repository form submission
-document.getElementById('edit-form').addEventListener('submit', async (e) => {
+const editForm = document.getElementById('edit-form');
+if (editForm) {
+    editForm.addEventListener('submit', async (e) => {
     e.preventDefault();
     
     const repoId = document.getElementById('edit-repo-id').value;
@@ -253,7 +287,8 @@ document.getElementById('edit-form').addEventListener('submit', async (e) => {
     } catch (error) {
         showStatus(`❌ Network error: ${error.message}`, 'error');
     }
-});
+    });
+}
 
 // Delete repository
 async function deleteRepository() {
@@ -304,4 +339,31 @@ window.addEventListener('DOMContentLoaded', () => {
     if (webhookUrlElement) {
         webhookUrlElement.textContent = webhookUrl;
     }
+    
+    // Fetch and populate cleanup config values
+    fetch('/api/stats', {
+        headers: {
+            'X-CSRF-Token': window.CSRF_TOKEN,
+            'X-Request-Time': Math.floor(Date.now() / 1000).toString(),
+            'X-Request-Nonce': generateNonce()
+        }
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.cleanup_config) {
+            const reposDays = document.getElementById('cleanup-repos-days');
+            const apiKeysDays = document.getElementById('cleanup-apikeys-days');
+            
+            if (reposDays) {
+                reposDays.textContent = data.cleanup_config.repositories_inactive_days;
+            }
+            if (apiKeysDays) {
+                apiKeysDays.textContent = data.cleanup_config.api_keys_inactive_days;
+            }
+        }
+    })
+    .catch(error => {
+        console.log('Could not fetch cleanup config:', error);
+        // Keep default values if fetch fails
+    });
 });

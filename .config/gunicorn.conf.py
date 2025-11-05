@@ -144,7 +144,7 @@ def post_fork(server, worker):
     # Try to acquire exclusive lock
     try:
         _lock_file = open(_lock_file_path, "w")
-        fcntl.flock(_lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        fcntl.flock(_lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)  # type: ignore
 
         # We got the lock! This worker will handle periodic tasks
         server.log.info(
@@ -159,7 +159,7 @@ def post_fork(server, worker):
         except Exception as e:
             server.log.error(f"Worker {worker.pid}: Failed to start periodic tasks: {e}")
             # Release lock on failure
-            fcntl.flock(_lock_file.fileno(), fcntl.LOCK_UN)
+            fcntl.flock(_lock_file.fileno(), fcntl.LOCK_UN)  # type: ignore
             _lock_file.close()
             _lock_file = None
 
@@ -195,7 +195,7 @@ def on_exit(server):
     # Clean up lock file
     if _lock_file:
         try:
-            fcntl.flock(_lock_file.fileno(), fcntl.LOCK_UN)
+            fcntl.flock(_lock_file.fileno(), fcntl.LOCK_UN)  # type: ignore
             _lock_file.close()
         except:
             pass
