@@ -33,13 +33,14 @@ Usage:
 
 import hmac
 import logging
+import re
 import secrets
 import time
 from functools import wraps
 from typing import Callable, Tuple
 
 from argon2.exceptions import VerifyMismatchError
-from flask import g, jsonify, request, session, make_response
+from flask import g, jsonify, make_response, request, session
 
 
 class AuthenticationHandler:
@@ -277,7 +278,7 @@ class AuthenticationHandler:
         permissions_bitmap = getattr(g, "api_key_permissions", 0)
         return self.bitmap_handler.check_key_in_bitkey(endpoint, permissions_bitmap)
 
-    def require_api_key_or_csrf(self, f):
+    def require_api_key_or_csrf(self, f):  # NOSONAR
         """
         Decorator to require either a valid API key or a valid CSRF token.
         This allows the frontend to access API routes securely while requiring API keys
@@ -382,25 +383,60 @@ class AuthenticationHandler:
                             403,
                         )
 
-                # Check nonce to prevent replay attacks
+                # Check nonce to prevent replay attacks (required for CSRF-based auth)
                 nonce = request.headers.get("X-Request-Nonce")
-                if nonce:
-                    used_nonces = session.get("used_nonces", [])
-                    if nonce in used_nonces:
-                        if self.logger:
-                            self.logger.warning(
-                                "API route access denied: nonce replay detected from %s "
-                                "(nonce: %s)",
-                                request.remote_addr,
-                                nonce[:16],
-                            )
-                        return jsonify({"error": "Replay attack detected"}), 403
+                if not nonce:
+                    if self.logger:
+                        self.logger.warning(
+                            "API route access denied: missing nonce from %s",
+                            request.remote_addr,
+                        )
+                    return jsonify({"error": "Nonce required"}), 403
 
-                    # Store nonce (keep last 100 to prevent memory bloat)
-                    used_nonces.append(nonce)
-                    if len(used_nonces) > 100:
-                        used_nonces = used_nonces[-100:]
+                # Validate nonce format: must be exactly 32 hexadecimal characters
+                if not re.match(r"^[a-f0-9]{32}$", nonce):
+                    if self.logger:
+                        self.logger.warning(
+                            "API route access denied: invalid nonce format from %s (nonce: %s)",
+                            request.remote_addr,
+                            nonce[:16],
+                        )
+                    return jsonify({"error": "Invalid nonce format"}), 403
+
+                # Stateless nonce validation: Store minimal data, auto-expires with CSRF token
+                # Get current CSRF token timestamp (nonces are only valid within this window)
+                token_timestamp = session.get("csrf_token_timestamp", 0)
+                current_time = int(request.headers.get("X-Request-Time", "0"))
+
+                # Calculate time window for this CSRF token (5 minutes)
+                time_window = f"{token_timestamp}_{session.get('csrf_token', '')[:8]}"
+
+                # Get nonces for current time window only
+                used_nonces = session.get("used_nonces", {})
+
+                # Clean up nonces from old CSRF tokens (different time windows)
+                # This happens automatically when CSRF token refreshes
+                if time_window not in used_nonces:
+                    used_nonces = {time_window: set()}
                     session["used_nonces"] = used_nonces
+
+                # Check if nonce was already used in current window
+                if nonce in used_nonces.get(time_window, set()):
+                    if self.logger:
+                        self.logger.warning(
+                            "API route access denied: nonce replay detected from %s (nonce: %s)",
+                            request.remote_addr,
+                            nonce[:16],
+                        )
+                    return jsonify({"error": "Replay attack detected"}), 403
+
+                # Store nonce in current time window
+                if time_window not in used_nonces:
+                    used_nonces[time_window] = set()
+                used_nonces[time_window].add(nonce)
+
+                # Keep only current window (automatic cleanup)
+                session["used_nonces"] = {time_window: used_nonces[time_window]}
 
                 # Browser fingerprinting - detect session hijacking
                 user_agent = request.headers.get("User-Agent", "")
@@ -417,8 +453,6 @@ class AuthenticationHandler:
                 # Helper: determine whether two UAs are "compatible" — same
                 # OS and browser family and close major versions (<=1 diff).
                 def _ua_compatible(old: str, new: str) -> bool:
-                    import re
-
                     if not old or not new:
                         return False
 
@@ -450,7 +484,7 @@ class AuthenticationHandler:
                             m = re.search(p, s)
                             if m:
                                 # family derived from pattern name
-                                family = p.split("/")[0].replace("\\", "")
+                                family = p.split("/", maxsplit=1)[0].replace("\\", "")
                                 try:
                                     return family, int(m.group(1))
                                 except Exception:
@@ -483,9 +517,7 @@ class AuthenticationHandler:
                         session["user_agents"] = user_agents[-5:]
                     else:
                         # check compatibility with any existing UA
-                        compatible = any(
-                            _ua_compatible(str(ua), user_agent) for ua in user_agents
-                        )
+                        compatible = any(_ua_compatible(str(ua), user_agent) for ua in user_agents)
                         if compatible:
                             # add this UA to the allowed list (cap history to 5)
                             user_agents.append(user_agent)
@@ -521,7 +553,7 @@ class AuthenticationHandler:
 
         return decorated_function
 
-    def require_admin_auth(self, f):
+    def require_admin_auth(self, f):  # NOSONAR
         """
         Decorator to require admin authentication via session or admin API key.
         Enforces 5-minute session timeout for security.
@@ -561,12 +593,11 @@ class AuthenticationHandler:
             # Check for session-based admin auth
             if not session.get("admin_authenticated"):
                 # Only log warning for non-GET requests (actual access attempts)
-                if request.method != "GET":
-                    if self.logger:
-                        self.logger.warning(
-                            "Admin route access denied: not authenticated from %s",
-                            request.remote_addr,
-                        )
+                if request.method != "GET" and self.logger:
+                    self.logger.warning(
+                        "Admin route access denied: not authenticated from %s",
+                        request.remote_addr,
+                    )
                 return jsonify({"error": "Unauthorized"}), 401
 
             # Invalidate sessions created before server startup

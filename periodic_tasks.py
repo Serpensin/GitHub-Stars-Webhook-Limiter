@@ -5,11 +5,18 @@ These tasks run on a schedule to maintain database health.
 Usage:
     from periodic_tasks import PeriodicTaskManager
     from CustomModules.DatabaseHandler import DatabaseHandler
+    from modules.DiscordHandler import DiscordHandler
+    from modules.GitHubHandler import GitHubHandler
 
     db_handler = DatabaseHandler("GitHub_Events_Limiter/data.db", logger)
+    discord_handler = DiscordHandler(logger=logger)
+    github_handler = GitHubHandler(logger=logger)
+
     task_manager = PeriodicTaskManager(
         db_handler=db_handler,
-        log_manager=log_manager
+        log_manager=log_manager,
+        discord_handler=discord_handler,
+        github_handler=github_handler
     )
     task_manager.start_all_tasks()
 """
@@ -18,10 +25,8 @@ import sqlite3
 import sys
 import threading
 import time
-from typing import Any, Optional
 from pathlib import Path
-
-import requests
+from typing import Any, Optional
 
 from CustomModules.database_handler import SQLiteDatabaseHandler
 from CustomModules.log_handler import LogManager
@@ -55,6 +60,8 @@ class PeriodicTaskManager:
         self,
         db_handler: SQLiteDatabaseHandler,
         log_manager: LogManager,
+        discord_handler,
+        github_handler,
         log_name: str = "periodic_tasks",
         send_discord_notification=None,
         db_path: Optional[str] = None,
@@ -65,6 +72,8 @@ class PeriodicTaskManager:
         Args:
             db_handler: DatabaseHandler instance for database operations
             log_manager: LogManager instance for creating logger
+            discord_handler: DiscordHandler instance for Discord webhook operations
+            github_handler: GitHubHandler instance for GitHub API operations
             log_name: Name for the logger (default: "periodic_tasks")
             send_discord_notification: Function to send Discord notifications for cleanup
             db_path: Path to the SQLite database file for direct access
@@ -78,6 +87,10 @@ class PeriodicTaskManager:
         self.running_threads = []
         self.task_loggers = {}  # Store loggers for each task
         self.tasks_started = False  # Flag to prevent starting tasks multiple times
+
+        # Store handler instances passed from main.py
+        self.discord_handler = discord_handler
+        self.github_handler = github_handler
 
         # Register all tasks here - they will automatically start when start_all_tasks() is called
         # Format: self.register_task(method, interval_seconds, "Task Name")
@@ -142,7 +155,7 @@ class PeriodicTaskManager:
                 logger.error(f"Error during rate limit cleanup: {e}")
                 logger.error(f"Error during rate limit cleanup: {e}")
 
-    def cleanup_discord_webhooks(self, logger) -> None:
+    def cleanup_discord_webhooks(self, logger) -> None: # NOSONAR
         """
         Check Discord webhooks that haven't been checked in 28 days and verify they still exist.
         Runs once every 4 hours. Deletes repository entries if webhook is invalid.
@@ -201,10 +214,21 @@ class PeriodicTaskManager:
                 webhook_url = row["discord_webhook_url"]
 
                 try:
-                    # Check if Discord webhook still exists
-                    response = requests.get(webhook_url, timeout=5)
+                    # Validate Discord webhook URL to prevent SSRF
+                    # Only allow official Discord webhook URLs
+                    if not webhook_url.startswith(
+                        "https://discord.com/api/webhooks/"
+                    ) and not webhook_url.startswith("https://discordapp.com/api/webhooks/"):
+                        if logger:
+                            logger.warning(
+                                f"Invalid Discord webhook URL format: {webhook_url[:50]}..."
+                            )
+                        continue
 
-                    if response.status_code == 200:
+                    # Check if Discord webhook still exists using DiscordHandler
+                    is_valid = self.discord_handler.verify_webhook(webhook_url)
+
+                    if is_valid:
                         # Webhook is valid - update last_webhook_checked
                         self._execute_sql(
                             (
@@ -217,15 +241,10 @@ class PeriodicTaskManager:
                         if logger:
                             logger.debug(f"Webhook verified: {webhook_url[:50]}...")
 
-                    elif response.status_code in [404, 401, 403]:
+                    else:
                         # Webhook no longer exists - send notification and delete entries
                         if logger:
-                            logger.warning(
-                                (
-                                    f"Webhook no longer valid "
-                                    f"(HTTP {response.status_code}): {webhook_url[:50]}..."
-                                )
-                            )
+                            logger.warning(f"Webhook no longer valid: {webhook_url[:50]}...")
 
                         # Get all repositories using this webhook
                         repos = self._execute_sql(
@@ -249,10 +268,7 @@ class PeriodicTaskManager:
                                     webhook_url,
                                     cleanup_type="webhook_deleted",
                                     repo_name=repo_list,
-                                    reason=(
-                                        f"Discord webhook returned HTTP "
-                                        f"{response.status_code} (no longer valid)"
-                                    ),
+                                    reason="Discord webhook is no longer valid",
                                 )
                             except Exception:
                                 pass  # Silently ignore notification errors
@@ -283,18 +299,8 @@ class PeriodicTaskManager:
                                 f"Deleted {deleted_repos} repositories with invalid webhook"
                             )
 
-                    else:
-                        # Unexpected status code - skip for now
-                        if logger:
-                            logger.debug(
-                                (
-                                    f"Unexpected status {response.status_code} "
-                                    f"for webhook, skipping"
-                                )
-                            )
-
-                except requests.RequestException as e:
-                    # Rate limit or network error - skip this webhook
+                except Exception as e:
+                    # Error checking webhook - skip this webhook
                     if logger:
                         logger.debug(f"Failed to check webhook (will retry later): {e}")
                     continue
@@ -317,7 +323,7 @@ class PeriodicTaskManager:
             if logger:
                 logger.error(f"Error during webhook cleanup: {e}")
 
-    def cleanup_inactive_repositories(self, logger) -> None:
+    def cleanup_inactive_repositories(self, logger) -> None: # NOSONAR
         """
         Check repositories that haven't received events in 360+ days and verify they still exist.
         Runs once every 4 hours. Deletes repository entries if inactive or deleted.
@@ -373,10 +379,11 @@ class PeriodicTaskManager:
             deleted_inactive_count = 0
             deleted_gone_count = 0
 
-            for repo in repos_to_check:
-                repo_id = repo["repo_id"]
-                repo_name = repo["repo_full_name"]
-                last_event = repo["last_event_received"]
+            for repo_row in repos_to_check:
+                repo_id = repo_row["repo_id"]
+                repo_name = repo_row["repo_full_name"]
+                last_event = repo_row["last_event_received"]
+                discord_webhook_url = repo_row["discord_webhook_url"]
 
                 # Check if repository hasn't received events in configured days
                 if last_event:
@@ -394,7 +401,7 @@ class PeriodicTaskManager:
                         if self.send_discord_notification:
                             try:
                                 self.send_discord_notification(
-                                    repo["discord_webhook_url"],
+                                    discord_webhook_url,
                                     cleanup_type="repo_inactive",
                                     repo_name=repo_name,
                                     reason=(
@@ -425,14 +432,23 @@ class PeriodicTaskManager:
 
                 # Repository is not inactive - check if it still exists on GitHub
                 try:
-                    owner, repo = repo_name.split("/")
-                    response = requests.get(
-                        f"https://api.github.com/repos/{owner}/{repo}",
-                        headers={"Accept": "application/vnd.github.v3+json"},
-                        timeout=5,
+                    # Extract owner and repo from repo_name using GitHubHandler
+                    repo_info = self.github_handler.extract_repo_info_from_url(
+                        f"https://github.com/{repo_name}"
                     )
 
-                    if response.status_code == 200:
+                    if not repo_info:
+                        # Invalid repo name format
+                        if logger:
+                            logger.warning(f"Invalid repository name format: {repo_name}")
+                        continue
+
+                    owner, repo = repo_info
+
+                    # Fetch repository data from GitHub API using GitHubHandler
+                    repo_data = self.github_handler.fetch_repo_data(owner, repo)
+
+                    if repo_data:
                         # Repository exists - update last_repo_checked
                         self._execute_sql(
                             "UPDATE repositories SET last_repo_checked = ? WHERE repo_id = ?",
@@ -442,8 +458,8 @@ class PeriodicTaskManager:
                         if logger:
                             logger.debug(f"Repository verified: {repo_name}")
 
-                    elif response.status_code == 404:
-                        # Repository no longer exists - delete it
+                    else:
+                        # Repository no longer exists (fetch_repo_data returns None for 404)
                         if logger:
                             logger.warning(f"Repository no longer exists: {repo_name}")
 
@@ -451,7 +467,7 @@ class PeriodicTaskManager:
                         if self.send_discord_notification:
                             try:
                                 self.send_discord_notification(
-                                    repo["discord_webhook_url"],
+                                    discord_webhook_url,
                                     cleanup_type="repo_deleted",
                                     repo_name=repo_name,
                                     reason="GitHub repository was deleted or made private",
@@ -476,28 +492,14 @@ class PeriodicTaskManager:
                             """,
                         )
 
-                    else:
-                        # Unexpected status code or rate limit - skip
-                        if logger:
-                            logger.debug(
-                                "Unexpected status %s for repo %s, skipping",
-                                response.status_code,
-                                repo_name,
-                            )
-
-                except requests.RequestException as e:
-                    # Network error or rate limit - skip this repo
+                except Exception as e:
+                    # Error checking repository - skip this repo
                     if logger:
                         logger.debug(
                             "Failed to check repository %s (will retry later): %s",
                             repo_name,
                             e,
                         )
-                    continue
-                except ValueError:
-                    # Invalid repo name format
-                    if logger:
-                        logger.warning(f"Invalid repository name format: {repo_name}")
                     continue
 
             if logger:
@@ -520,7 +522,7 @@ class PeriodicTaskManager:
             if logger:
                 logger.error(f"Error during repository cleanup: {e}")
 
-    def cleanup_inactive_api_keys(self, logger) -> None:
+    def cleanup_inactive_api_keys(self, logger) -> None: # NOSONAR
         """
         Delete non-admin API keys that haven't been used in 360+ days.
         Runs once every 4 hours.
@@ -633,8 +635,7 @@ class PeriodicTaskManager:
 
         except Exception as e:
             if logger:
-                if logger:
-                    logger.error(f"Error during API key cleanup: {e}")
+                logger.error(f"Error during API key cleanup: {e}")
 
     def start_all_tasks(self) -> None:
         """

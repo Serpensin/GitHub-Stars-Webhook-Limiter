@@ -1,24 +1,24 @@
 // Tab switching
 function showTab(tabName, clickEvent) {
     // Hide all tabs
-    document.querySelectorAll('.tab-content').forEach(tab => {
+    for (const tab of document.querySelectorAll('.tab-content')) {
         tab.classList.remove('active');
-    });
-    document.querySelectorAll('.tab-button').forEach(button => {
+    }
+    for (const button of document.querySelectorAll('.tab-button')) {
         button.classList.remove('active');
-    });
+    }
     
     // Show selected tab
     document.getElementById(`${tabName}-tab`).classList.add('active');
-    if (clickEvent && clickEvent.target) {
+    if (clickEvent?.target) {
         clickEvent.target.classList.add('active');
     } else {
         // If called programmatically, find and activate the button
-        document.querySelectorAll('.tab-button').forEach(button => {
+        for (const button of document.querySelectorAll('.tab-button')) {
             if (button.getAttribute('onclick').includes(tabName)) {
                 button.classList.add('active');
             }
-        });
+        }
     }
     
     // Reset manage tab state when switching away
@@ -37,7 +37,7 @@ async function generateSecret(inputId) {
     try {
         const response = await fetch('/api/generate-secret', {
             headers: {
-                'X-CSRF-Token': window.CSRF_TOKEN,
+                'X-CSRF-Token': globalThis.CSRF_TOKEN,
                 'X-Request-Time': Math.floor(Date.now() / 1000).toString(),
                 'X-Request-Nonce': generateNonce()
             }
@@ -49,7 +49,7 @@ async function generateSecret(inputId) {
          showStatus('Secret generated successfully! Don\'t forget to copy it.', 'success');
         } else if (data.new_token) {
             // Token expired, update and retry
-            window.CSRF_TOKEN = data.new_token;
+            globalThis.CSRF_TOKEN = data.new_token;
             return generateSecret(inputId);
         }
     } catch (error) {
@@ -57,47 +57,26 @@ async function generateSecret(inputId) {
     }
 }
 
-// Generate a unique nonce for each request (prevents replay attacks)
-// Use crypto.getRandomValues when available for better randomness than Math.random()
+// Generate a cryptographically secure random nonce for each request (prevents replay attacks)
 function generateNonce() {
-    try {
-        if (window.crypto && window.crypto.getRandomValues) {
-            const arr = new Uint32Array(4);
-            window.crypto.getRandomValues(arr);
-            return Array.from(arr).map(n => n.toString(36)).join('') + Date.now().toString(36);
-        }
-    } catch (e) {
-        // Fall back to Math.random if crypto is unavailable
-    }
-    return Math.random().toString(36).substring(2) + Date.now().toString(36);
+    const array = new Uint32Array(4);
+    crypto.getRandomValues(array);
+    return Array.from(array, num => num.toString(16).padStart(8, '0')).join('');
 }
 
 // Copy to clipboard
 async function copyToClipboard(inputId) {
     const input = document.getElementById(inputId);
-    if (!input || !input.value) {
+    if (!input?.value) {
         showStatus('No secret to copy!', 'error');
         return;
     }
 
-    // Prefer modern Clipboard API when available
-    if (navigator.clipboard && navigator.clipboard.writeText) {
-        try {
-            await navigator.clipboard.writeText(input.value);
-            showStatus('Secret copied to clipboard!', 'success');
-            return;
-        } catch (e) {
-            // fallback to execCommand below
-        }
-    }
-
-    // Fallback for older browsers
-    input.select();
     try {
-        document.execCommand('copy');
+        await navigator.clipboard.writeText(input.value);
         showStatus('Secret copied to clipboard!', 'success');
-    } catch (e) {
-        showStatus('Copy not supported in this browser', 'error');
+    } catch (err) {
+        showStatus('Copy failed: ' + err.message, 'error');
     }
 }
 
@@ -146,7 +125,7 @@ if (addForm) {
    method: 'POST',
          headers: {
        'Content-Type': 'application/json',
-                'X-CSRF-Token': window.CSRF_TOKEN,
+                'X-CSRF-Token': globalThis.CSRF_TOKEN,
                 'X-Request-Time': Math.floor(Date.now() / 1000).toString(),
                 'X-Request-Nonce': generateNonce()
             },
@@ -164,7 +143,9 @@ if (addForm) {
          showStatus(`✅ ${data.message} - ${data.repo_full_name}`, 'success');
        document.getElementById('add-form').reset();
 // Re-check default events
-            document.querySelectorAll('input[name="events"]').forEach(cb => cb.checked = true);
+            for (const cb of document.querySelectorAll('input[name="events"]')) {
+                cb.checked = true;
+            }
 } else {
         showStatus(`❌ ${data.error}`, 'error');
         }
@@ -190,7 +171,7 @@ if (verifyForm) {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
-                'X-CSRF-Token': window.CSRF_TOKEN,
+                'X-CSRF-Token': globalThis.CSRF_TOKEN,
                 'X-Request-Time': Math.floor(Date.now() / 1000).toString(),
                 'X-Request-Nonce': generateNonce()
             },
@@ -261,7 +242,7 @@ if (editForm) {
             method: 'PUT',
     headers: {
      'Content-Type': 'application/json',
-                'X-CSRF-Token': window.CSRF_TOKEN,
+                'X-CSRF-Token': globalThis.CSRF_TOKEN,
                 'X-Request-Time': Math.floor(Date.now() / 1000).toString(),
                 'X-Request-Nonce': generateNonce()
      },
@@ -306,7 +287,7 @@ async function deleteRepository() {
             method: 'DELETE',
        headers: {
       'Content-Type': 'application/json',
-                'X-CSRF-Token': window.CSRF_TOKEN,
+                'X-CSRF-Token': globalThis.CSRF_TOKEN,
                 'X-Request-Time': Math.floor(Date.now() / 1000).toString(),
                 'X-Request-Nonce': generateNonce()
   },
@@ -333,8 +314,8 @@ async function deleteRepository() {
 }
 
 // Set webhook URL dynamically
-window.addEventListener('DOMContentLoaded', () => {
-    const webhookUrl = `${window.location.origin}/webhook`;
+globalThis.addEventListener('DOMContentLoaded', () => {
+    const webhookUrl = `${globalThis.location.origin}/webhook`;
     const webhookUrlElement = document.getElementById('webhook-url');
     if (webhookUrlElement) {
         webhookUrlElement.textContent = webhookUrl;
@@ -343,7 +324,7 @@ window.addEventListener('DOMContentLoaded', () => {
     // Fetch and populate cleanup config values
     fetch('/api/stats', {
         headers: {
-            'X-CSRF-Token': window.CSRF_TOKEN,
+            'X-CSRF-Token': globalThis.CSRF_TOKEN,
             'X-Request-Time': Math.floor(Date.now() / 1000).toString(),
             'X-Request-Nonce': generateNonce()
         }

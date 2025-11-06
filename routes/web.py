@@ -25,7 +25,7 @@ get_repository_by_id: Optional[Callable[[int], Optional[dict[str, Any]]]] = None
 decrypt_secret: Optional[Callable[[bytes], str]] = None
 verify_github_signature: Optional[Callable[[str, str, bytes], bool]] = None
 has_user_triggered_event_before: Optional[Callable[[int, int, str], bool]] = None
-send_discord_notification: Optional[Callable[[str, dict[str, Any], str], bool]] = None
+discord_handler: Optional[Any] = None
 add_user_event: Optional[Callable[[int, int, str], None]] = None
 increment_stat: Optional[Callable[[str], None]] = None  # amount parameter has default value
 get_all_stats: Optional[Callable[[], dict]] = None
@@ -38,7 +38,7 @@ def init_web_routes(
     _decrypt_secret,
     _verify_github_signature,
     _has_user_triggered_event_before,
-    _send_discord_notification,
+    _discord_handler,
     _add_user_event,
     _get_db=None,
     _increment_stat=None,
@@ -47,7 +47,7 @@ def init_web_routes(
 ):
     """Initialize route dependencies"""
     global logger, get_db, get_repository_by_id, decrypt_secret, verify_github_signature
-    global has_user_triggered_event_before, send_discord_notification, add_user_event
+    global has_user_triggered_event_before, discord_handler, add_user_event
     global increment_stat, get_all_stats, get_top_users
 
     logger = _logger
@@ -56,7 +56,7 @@ def init_web_routes(
     decrypt_secret = _decrypt_secret
     verify_github_signature = _verify_github_signature
     has_user_triggered_event_before = _has_user_triggered_event_before
-    send_discord_notification = _send_discord_notification
+    discord_handler = _discord_handler
     add_user_event = _add_user_event
     increment_stat = _increment_stat
     get_all_stats = _get_all_stats
@@ -187,7 +187,7 @@ def license_file():
 
 
 @web_bp.route("/webhook", methods=["POST"])
-def handle_webhook():  # pylint: disable=too-many-return-statements,too-many-branches
+def handle_webhook():  # pylint: disable=too-many-return-statements,too-many-branches # NOSONAR
     """
     Handles incoming GitHub webhook events (star, watch, ping).
 
@@ -202,7 +202,7 @@ def handle_webhook():  # pylint: disable=too-many-return-statements,too-many-bra
     assert decrypt_secret is not None
     assert verify_github_signature is not None
     assert has_user_triggered_event_before is not None
-    assert send_discord_notification is not None
+    assert discord_handler is not None
     assert add_user_event is not None
     assert get_db is not None
 
@@ -350,7 +350,11 @@ def handle_webhook():  # pylint: disable=too-many-return-statements,too-many-bra
             if logger:
                 logger.error(f"Failed to update user statistics for user {sender_id}: {e}")
 
-        if send_discord_notification(repo_config["discord_webhook_url"], data, event_type):
+        if discord_handler.send_notification(
+            webhook_url=repo_config["discord_webhook_url"],
+            event_data=data,
+            event_type=event_type,
+        ):
             add_user_event(sender_id, repo_id, event_type)
 
             # Increment unique events counter

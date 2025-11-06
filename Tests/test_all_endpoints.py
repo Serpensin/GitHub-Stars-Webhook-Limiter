@@ -36,9 +36,9 @@ class TestAllEndpoints(unittest.TestCase):
         try:
             response = requests.get(f"{cls.base_url}/", timeout=5)
             if response.status_code not in [200, 401, 404]:
-                raise Exception(f"Server returned unexpected status: {response.status_code}")
+                raise Exception(f"Server returned unexpected status: {response.status_code}") # NOSONAR
         except requests.exceptions.RequestException as e:
-            raise Exception(f"Server not running at {cls.base_url}. Error: {e}")
+            raise Exception(f"Server not running at {cls.base_url}. Error: {e}") # NOSONAR
         
         print(f"Connected to server at {cls.base_url}")
 
@@ -206,7 +206,7 @@ class TestAllEndpoints(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         data = response.json()
         self.assertIn('bitmap', data)
-        self.assertEqual(data['bitmap'], 3)  # 1 + 2 = 3
+        self.assertEqual(data['bitmap'], 3)
 
     def test_permissions_calculate_missing_json(self):
         """Test POST /api/permissions/calculate without JSON."""

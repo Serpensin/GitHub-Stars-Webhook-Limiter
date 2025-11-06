@@ -7,13 +7,15 @@
     <title>GitHub Stars Webhook Limiter - Statistics</title>
     <link rel="icon" type="image/svg+xml" href="/favicon.ico">
     <link rel="stylesheet" href="/static/style.css">
-    <script>
+    <script type="module">
         // CSRF token for API authentication
-        window.CSRF_TOKEN = "{{ csrf_token }}";
+        globalThis.CSRF_TOKEN = "{{ csrf_token }}";
         
-        // Generate a random nonce for replay protection
+        // Generate a cryptographically secure random nonce for replay protection
         function generateNonce() {
-            return Math.random().toString(36).substring(2) + Date.now().toString(36);
+            const array = new Uint32Array(4);
+            crypto.getRandomValues(array);
+            return Array.from(array, num => num.toString(16).padStart(8, '0')).join('');
         }
     </script>
     <style>
@@ -167,7 +169,7 @@
             try {
                 const response = await fetch('/api/stats', {
                     headers: {
-                        'X-CSRF-Token': window.CSRF_TOKEN,
+                        'X-CSRF-Token': globalThis.CSRF_TOKEN,
                         'X-Request-Time': Math.floor(Date.now() / 1000).toString(),
                         'X-Request-Nonce': generateNonce()
                     }
@@ -178,122 +180,155 @@
                 const data = await response.json();
                 renderStats(data);
             } catch (error) {
-                content.innerHTML = `<div class="error">Failed to load statistics: ${error.message}</div>`;
+                // Sanitize error message to prevent XSS
+                const errorDiv = document.createElement('div');
+                errorDiv.className = 'error';
+                errorDiv.textContent = `Failed to load statistics: ${error.message}`;
+                content.innerHTML = '';
+                content.appendChild(errorDiv);
             }
         }
 
         function renderStats(data) {
             const content = document.getElementById('stats-content');
+            content.innerHTML = ''; // Clear content
 
-            const html = `
-                <div class="stats-section">
-                    <h2>Current Statistics</h2>
-                    <div class="stat-grid">
-                        <div class="stat-item">
-                            <div class="stat-label">Active Repositories</div>
-                            <div class="stat-value">${data.totals.repositories_current || 0}</div>
-                        </div>
-                        <div class="stat-item">
-                            <div class="stat-label">Active API Keys</div>
-                            <div class="stat-value">${data.totals.api_keys_current || 0}</div>
-                        </div>
-                        <div class="stat-item">
-                            <div class="stat-label">Total Events Received</div>
-                            <div class="stat-value">${data.totals.events_received || 0}</div>
-                        </div>
-                        <div class="stat-item">
-                            <div class="stat-label">Unique Events</div>
-                            <div class="stat-value">${data.totals.unique_events || 0}</div>
-                        </div>
-                        <div class="stat-item warning">
-                            <div class="stat-label">Duplicate Events</div>
-                            <div class="stat-value">${data.totals.duplicate_events || 0}</div>
-                        </div>
+            // Create stats sections using DOM manipulation
+            const statsSection1 = document.createElement('div');
+            statsSection1.className = 'stats-section';
+            statsSection1.innerHTML = `
+                <h2>Current Statistics</h2>
+                <div class="stat-grid">
+                    <div class="stat-item">
+                        <div class="stat-label">Active Repositories</div>
+                        <div class="stat-value">${Number.parseInt(data.totals.repositories_current) || 0}</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-label">Active API Keys</div>
+                        <div class="stat-value">${Number.parseInt(data.totals.api_keys_current) || 0}</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-label">Total Events Received</div>
+                        <div class="stat-value">${Number.parseInt(data.totals.events_received) || 0}</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-label">Unique Events</div>
+                        <div class="stat-value">${Number.parseInt(data.totals.unique_events) || 0}</div>
+                    </div>
+                    <div class="stat-item warning">
+                        <div class="stat-label">Duplicate Events</div>
+                        <div class="stat-value">${Number.parseInt(data.totals.duplicate_events) || 0}</div>
                     </div>
                 </div>
-
-                <div class="stats-section">
-                    <h2>Automatic Deletions</h2>
-                    <div class="stat-grid">
-                        <div class="stat-item danger">
-                            <div class="stat-label">Repos (360 days inactive)</div>
-                            <div class="stat-value">${data.deletions.repos_inactive_360_days || 0}</div>
-                        </div>
-                        <div class="stat-item danger">
-                            <div class="stat-label">Repos (GitHub deleted)</div>
-                            <div class="stat-value">${data.deletions.repos_github_deleted || 0}</div>
-                        </div>
-                        <div class="stat-item danger">
-                            <div class="stat-label">Repos (Invalid webhook)</div>
-                            <div class="stat-value">${data.deletions.repos_webhook_invalid || 0}</div>
-                        </div>
-                        <div class="stat-item danger">
-                            <div class="stat-label">API Keys (360 days inactive)</div>
-                            <div class="stat-value">${data.deletions.api_keys_inactive_360_days || 0}</div>
-                        </div>
-                    </div>
-                </div>
-
-                <div class="stats-section">
-                    <h2>Top Users by Valid Events</h2>
-                    <table class="top-users-table">
-                        <thead>
-                            <tr>
-                                <th>Rank</th>
-                                <th>Username</th>
-                                <th>Valid Events</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            ${renderTopUsers(data.top_users.valid_events)}
-                        </tbody>
-                    </table>
-                </div>
-
-                <div class="stats-section">
-                    <h2>Top Users by Invalid Events</h2>
-                    <table class="top-users-table">
-                        <thead>
-                            <tr>
-                                <th>Rank</th>
-                                <th>Username</th>
-                                <th>Invalid Events</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            ${renderTopUsers(data.top_users.invalid_events)}
-                        </tbody>
-                    </table>
-                </div>
-
-                <div class="timestamp">Last updated: ${new Date(data.timestamp * 1000).toLocaleString()}</div>
             `;
+            content.appendChild(statsSection1);
 
-            content.innerHTML = html;
+            const statsSection2 = document.createElement('div');
+            statsSection2.className = 'stats-section';
+            statsSection2.innerHTML = `
+                <h2>Automatic Deletions</h2>
+                <div class="stat-grid">
+                    <div class="stat-item danger">
+                        <div class="stat-label">Repos (360 days inactive)</div>
+                        <div class="stat-value">${Number.parseInt(data.deletions.repos_inactive_360_days) || 0}</div>
+                    </div>
+                    <div class="stat-item danger">
+                        <div class="stat-label">Repos (GitHub deleted)</div>
+                        <div class="stat-value">${Number.parseInt(data.deletions.repos_github_deleted) || 0}</div>
+                    </div>
+                    <div class="stat-item danger">
+                        <div class="stat-label">Repos (Invalid webhook)</div>
+                        <div class="stat-value">${Number.parseInt(data.deletions.repos_webhook_invalid) || 0}</div>
+                    </div>
+                    <div class="stat-item danger">
+                        <div class="stat-label">API Keys (360 days inactive)</div>
+                        <div class="stat-value">${Number.parseInt(data.deletions.api_keys_inactive_360_days) || 0}</div>
+                    </div>
+                </div>
+            `;
+            content.appendChild(statsSection2);
+
+            const statsSection3 = document.createElement('div');
+            statsSection3.className = 'stats-section';
+            const table1 = document.createElement('table');
+            table1.className = 'top-users-table';
+            table1.innerHTML = `
+                <h2>Top Users by Valid Events</h2>
+                <thead>
+                    <tr>
+                        <th>Rank</th>
+                        <th>Username</th>
+                        <th>Valid Events</th>
+                    </tr>
+                </thead>
+            `;
+            const tbody1 = document.createElement('tbody');
+            renderTopUsers(data.top_users.valid_events, tbody1);
+            table1.appendChild(tbody1);
+            statsSection3.appendChild(table1);
+            content.appendChild(statsSection3);
+
+            const statsSection4 = document.createElement('div');
+            statsSection4.className = 'stats-section';
+            const table2 = document.createElement('table');
+            table2.className = 'top-users-table';
+            table2.innerHTML = `
+                <h2>Top Users by Invalid Events</h2>
+                <thead>
+                    <tr>
+                        <th>Rank</th>
+                        <th>Username</th>
+                        <th>Invalid Events</th>
+                    </tr>
+                </thead>
+            `;
+            const tbody2 = document.createElement('tbody');
+            renderTopUsers(data.top_users.invalid_events, tbody2);
+            table2.appendChild(tbody2);
+            statsSection4.appendChild(table2);
+            content.appendChild(statsSection4);
+
+            const timestamp = document.createElement('div');
+            timestamp.className = 'timestamp';
+            timestamp.textContent = `Last updated: ${new Date(data.timestamp * 1000).toLocaleString()}`;
+            content.appendChild(timestamp);
         }
 
-        function renderTopUsers(users) {
+        function renderTopUsers(users, tbody) {
             if (!users || users.length === 0) {
-                return '<tr><td colspan="3" style="text-align: center;">No data available</td></tr>';
+                const tr = document.createElement('tr');
+                const td = document.createElement('td');
+                td.setAttribute('colspan', '3');
+                td.style.textAlign = 'center';
+                td.textContent = 'No data available';
+                tr.appendChild(td);
+                tbody.appendChild(tr);
+                return;
             }
 
-            return users.map((user, index) => `
-                <tr>
-                    <td>${index + 1}</td>
-                    <td>${escapeHtml(user.username)}</td>
-                    <td>${user.count}</td>
-                </tr>
-            `).join('');
-        }
-
-        function escapeHtml(text) {
-            const div = document.createElement('div');
-            div.textContent = text;
-            return div.innerHTML;
+            let index = 0;
+            for (const user of users) {
+                const tr = document.createElement('tr');
+                
+                const td1 = document.createElement('td');
+                td1.textContent = String(index + 1);
+                tr.appendChild(td1);
+                
+                const td2 = document.createElement('td');
+                td2.textContent = user.username;
+                tr.appendChild(td2);
+                
+                const td3 = document.createElement('td');
+                td3.textContent = String(user.count);
+                tr.appendChild(td3);
+                
+                tbody.appendChild(tr);
+                index++;
+            }
         }
 
         // Load stats on page load
-        loadStats();
+        await loadStats();
 
         // Auto-refresh every 30 seconds
         setInterval(loadStats, 30000);

@@ -102,7 +102,8 @@ def init_admin_routes(
     _internal_server_secret=None,
 ):
     """Initialize route dependencies"""
-    global logger, _require_admin_auth, verify_admin_password, hash_api_key, get_db, increment_stat, internal_server_secret
+    global logger, _require_admin_auth, verify_admin_password
+    global hash_api_key, get_db, increment_stat, internal_server_secret
 
     logger = _logger
     _require_admin_auth = _require_admin_auth_func
@@ -131,10 +132,10 @@ def admin_page():
 def admin_login():
     """
     Authenticates admin user with password.
-    
+
     INTERNAL USE ONLY: This endpoint is not part of the public API documentation.
     It is used exclusively by the admin panel UI at /admin for session management.
-    
+
     For API access with admin privileges, use an admin API key instead.
     """
     from flask import make_response
@@ -179,7 +180,7 @@ def admin_login():
 def admin_logout():
     """
     Logs out admin user.
-    
+
     INTERNAL USE ONLY: This endpoint is not part of the public API documentation.
     It is used exclusively by the admin panel UI at /admin for session management.
     """
@@ -246,7 +247,7 @@ def admin_list_keys():
 
 @admin_bp.route("/api/keys", methods=["POST"])
 @require_admin_auth
-def admin_create_key():
+def admin_create_key():  # NOSONAR
     """
     Creates a new API key with granular permissions and rate limit.
     Can also create admin keys with full access.
@@ -435,7 +436,7 @@ def admin_toggle_key(key_id):
 
 @admin_bp.route("/api/keys/<int:key_id>", methods=["PATCH"])
 @require_admin_auth
-def admin_update_key(key_id):
+def admin_update_key(key_id):  # NOSONAR
     """
     Updates an API key's permissions and/or rate limit.
     Note: Admin keys cannot have their permissions or rate limits changed.
@@ -613,7 +614,7 @@ def admin_list_log_files():
 
 @admin_bp.route("/api/logs", methods=["GET"])
 @require_admin_auth
-def admin_get_logs():
+def admin_get_logs():  # NOSONAR
     """
     Retrieves the latest application logs in reverse order (newest first).
     Returns the last 1000 lines by default.

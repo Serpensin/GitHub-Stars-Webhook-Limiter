@@ -40,9 +40,8 @@ ERROR_PERMISSION_NOT_INITIALIZED = "Permission system not initialized"
 # These will be set by main.py when registering blueprints
 logger: Optional[Any] = None
 _require_api_key_or_csrf: Optional[Callable] = None  # Store the actual decorator
-extract_repo_info_from_url: Optional[Callable[[str], Optional[tuple[str, str]]]] = None
-fetch_repo_data_from_github: Optional[Callable[[str, str], Optional[dict[str, Any]]]] = None
-verify_discord_webhook: Optional[Callable[[str], bool]] = None
+github_handler: Optional[Any] = None
+discord_handler: Optional[Any] = None
 encrypt_secret: Optional[Callable[[str], bytes]] = None
 get_db: Optional[Callable[[], Any]] = None
 get_repository_by_id: Optional[Callable[[int], Optional[dict[str, Any]]]] = None
@@ -67,9 +66,8 @@ def require_api_key_or_csrf(f):
 def init_api_routes(
     _logger,
     _require_api_key_or_csrf_func,
-    _extract_repo_info_from_url,
-    _fetch_repo_data_from_github,
-    _verify_discord_webhook,
+    _github_handler,
+    _discord_handler,
     _encrypt_secret,
     _get_db,
     _get_repository_by_id,
@@ -80,16 +78,15 @@ def init_api_routes(
     _get_top_users=None,
 ):
     """Initialize route dependencies"""
-    global logger, _require_api_key_or_csrf, extract_repo_info_from_url
-    global fetch_repo_data_from_github, verify_discord_webhook, encrypt_secret
+    global logger, _require_api_key_or_csrf, github_handler
+    global discord_handler, encrypt_secret
     global get_db, get_repository_by_id, verify_secret, bitmap_handler, increment_stat
     global get_all_stats, get_top_users
 
     logger = _logger
     _require_api_key_or_csrf = _require_api_key_or_csrf_func
-    extract_repo_info_from_url = _extract_repo_info_from_url
-    fetch_repo_data_from_github = _fetch_repo_data_from_github
-    verify_discord_webhook = _verify_discord_webhook
+    github_handler = _github_handler
+    discord_handler = _discord_handler
     encrypt_secret = _encrypt_secret
     get_db = _get_db
     get_repository_by_id = _get_repository_by_id
@@ -155,7 +152,7 @@ def api_generate_secret():
 
 @api_bp.route("/repositories", methods=["POST", "PATCH", "DELETE"])
 @require_api_key_or_csrf
-def api_manage_repository():  # pylint: disable=too-many-return-statements
+def api_manage_repository():  # pylint: disable=too-many-return-statements # NOSONAR
     """
     Manages repository configuration (add, update, or delete).
 
@@ -198,9 +195,8 @@ def api_manage_repository():  # pylint: disable=too-many-return-statements
 
     # Ensure dependencies are initialized
     assert get_db is not None
-    assert extract_repo_info_from_url is not None
-    assert fetch_repo_data_from_github is not None
-    assert verify_discord_webhook is not None
+    assert github_handler is not None
+    assert discord_handler is not None
     assert encrypt_secret is not None
 
     if request.method == "POST":
@@ -237,7 +233,7 @@ def api_manage_repository():  # pylint: disable=too-many-return-statements
             )
 
         # Extract owner and repo from URL
-        repo_info = extract_repo_info_from_url(repo_url)
+        repo_info = github_handler.extract_repo_info_from_url(repo_url)
         if not repo_info:
             if logger:
                 logger.warning(f"API: Add repository rejected - invalid URL: {repo_url}")
@@ -246,7 +242,7 @@ def api_manage_repository():  # pylint: disable=too-many-return-statements
         owner, repo_name = repo_info
 
         # Fetch repository data from GitHub
-        github_data = fetch_repo_data_from_github(owner, repo_name)
+        github_data = github_handler.fetch_repo_data(owner, repo_name)
         if not github_data:
             if logger:
                 logger.error(f"API: Failed to fetch GitHub data for {owner}/{repo_name}")
@@ -258,7 +254,7 @@ def api_manage_repository():  # pylint: disable=too-many-return-statements
             )
 
         # Verify Discord webhook
-        if not verify_discord_webhook(discord_webhook_url):
+        if not discord_handler.verify_webhook(discord_webhook_url):
             if logger:
                 logger.warning(
                     (
@@ -377,7 +373,7 @@ def api_manage_repository():  # pylint: disable=too-many-return-statements
 
         new_discord_webhook_url = data.get("new_discord_webhook_url", "").strip()
         if new_discord_webhook_url:
-            if not verify_discord_webhook(new_discord_webhook_url):
+            if not discord_handler.verify_webhook(new_discord_webhook_url):
                 if logger:
                     logger.warning(
                         (
@@ -497,7 +493,7 @@ def api_manage_repository():  # pylint: disable=too-many-return-statements
 
 @api_bp.route("/repositories/verify", methods=["POST"])
 @require_api_key_or_csrf
-def api_verify_repository():  # pylint: disable=too-many-return-statements
+def api_verify_repository():  # pylint: disable=too-many-return-statements # NOSONAR
     """
     Verifies repository credentials for editing/deleting.
     Only requires repo_url and discord_webhook_url (no secret needed).
@@ -514,8 +510,7 @@ def api_verify_repository():  # pylint: disable=too-many-return-statements
         return perm_check
 
     # Ensure dependencies are initialized
-    assert extract_repo_info_from_url is not None
-    assert fetch_repo_data_from_github is not None
+    assert github_handler is not None
     assert get_repository_by_id is not None
 
     if logger:
@@ -535,7 +530,7 @@ def api_verify_repository():  # pylint: disable=too-many-return-statements
         return jsonify({"error": ERROR_MISSING_FIELDS}), 400
 
     # Extract owner and repo from URL
-    repo_info = extract_repo_info_from_url(repo_url)
+    repo_info = github_handler.extract_repo_info_from_url(repo_url)
     if not repo_info:
         if logger:
             logger.warning(f"API: Verify repository rejected - invalid URL: {repo_url}")
@@ -544,7 +539,7 @@ def api_verify_repository():  # pylint: disable=too-many-return-statements
     owner, repo_name = repo_info
 
     # Fetch repository data from GitHub
-    github_data = fetch_repo_data_from_github(owner, repo_name)
+    github_data = github_handler.fetch_repo_data(owner, repo_name)
     if not github_data:
         if logger:
             logger.error(

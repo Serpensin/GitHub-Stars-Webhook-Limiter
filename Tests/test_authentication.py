@@ -14,7 +14,7 @@ import unittest
 import requests
 
 BASE_URL = "http://127.0.0.1:5000"
-TEST_PASSWORD = "1234"
+TEST_PASSWORD = "1234" # NOSONAR
 
 
 class TestAuthentication(unittest.TestCase):
@@ -37,7 +37,7 @@ class TestAuthentication(unittest.TestCase):
                 match = re.search(r'window\.INTERNAL_SECRET = "([^"]+)"', response.text)
                 if match:
                     cls.internal_secret = match.group(1)
-                    print(f"Retrieved internal secret for admin authentication")
+                    print("Retrieved internal secret for admin authentication")
         except Exception as e:
             print(f"Warning: Could not retrieve internal secret: {e}")
 

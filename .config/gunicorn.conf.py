@@ -74,7 +74,7 @@ class GunicornLogger:
     def log(self, lvl, msg, *args, **kwargs):
         self.error_logger.log(lvl, msg, *args, **kwargs)
 
-    def access(self, resp, req, environ, request_time):
+    def access(self, resp, _req, environ, _request_time):
         """Log access requests using our custom access logger."""
         # Format: IP - - [time] "request" status size "referrer" "user-agent"
         self.access_logger.info(
@@ -197,7 +197,7 @@ def on_exit(server):
         try:
             fcntl.flock(_lock_file.fileno(), fcntl.LOCK_UN)  # type: ignore
             _lock_file.close()
-        except:
+        except Exception:  # pylint: disable=broad-except
             pass
         _lock_file = None
 
@@ -205,7 +205,7 @@ def on_exit(server):
     try:
         if os.path.exists(_lock_file_path):
             os.unlink(_lock_file_path)
-    except:
+    except Exception:  # pylint: disable=broad-except
         pass
 
     server.log.info("Gunicorn shutting down")

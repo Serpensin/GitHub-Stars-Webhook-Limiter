@@ -71,7 +71,7 @@ PERMISSIONS = [
         "bit": 1,
         "value": 2,
         "description": "Allows adding new repositories to the limiter",
-        "endpoints": ["/api/repositories"],  # POST method
+        "endpoints": ["/api/repositories"],  # POST method # NOSONAR
     },
     {
         "name": "repositories-verify",
@@ -144,7 +144,7 @@ PERMISSIONS = [
         "value": 1024,
         "description": "Grants full access to all testing endpoints",
         "endpoints": ["/api/admin/login"],
-    }
+    },
 ]
 
 # Derive permission key list for BitmapHandler (order matters!)

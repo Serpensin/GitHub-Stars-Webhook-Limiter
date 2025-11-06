@@ -20,6 +20,7 @@ Usage:
 """
 
 import logging
+
 import requests
 
 
@@ -110,7 +111,9 @@ class GitHubHandler:
                 }
 
             if self.logger:
-                self.logger.warning(f"Failed to fetch GitHub repo data: HTTP {response.status_code}")
+                self.logger.warning(
+                    f"Failed to fetch GitHub repo data: HTTP {response.status_code}"
+                )
 
         except requests.RequestException as e:
             if self.logger:

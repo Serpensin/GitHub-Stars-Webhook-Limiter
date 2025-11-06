@@ -107,9 +107,7 @@ class DiscordHandler:
         try:
             # Cleanup notifications
             if cleanup_type:
-                return self._send_cleanup_notification(
-                    webhook_url, cleanup_type, repo_name, reason
-                )
+                return self._send_cleanup_notification(webhook_url, cleanup_type, repo_name, reason)
 
             # Regular event notifications (star/watch)
             if not event_data:
@@ -177,9 +175,7 @@ class DiscordHandler:
             self.logger.info(f"Discord cleanup notification sent successfully: {cleanup_type}")
         return True
 
-    def _send_event_notification(
-        self, webhook_url: str, event_data: dict, event_type: str
-    ) -> bool:
+    def _send_event_notification(self, webhook_url: str, event_data: dict, event_type: str) -> bool:
         """
         Sends a GitHub event notification to Discord.
 
@@ -232,5 +228,7 @@ class DiscordHandler:
         response.raise_for_status()
 
         if self.logger:
-            self.logger.info(f"Discord notification sent successfully: {event_type} by {user_login}")
+            self.logger.info(
+                f"Discord notification sent successfully: {event_type} by {user_login}"
+            )
         return True

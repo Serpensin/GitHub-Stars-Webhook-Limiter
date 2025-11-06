@@ -326,17 +326,17 @@ The application will be available at `http://localhost:5000`
 
 ```bash
 # Format imports
-isort .
+py -m isort .
 
 # Format code
-black .
+py -m black .
 
 # Check code style
-pip install flake8-pyproject
-flake8 .
+py -m pip install flake8-pyproject
+py -m flake8 .
 
 # Run static analysis
-pylint *.py routes modules --fail-under=10.0
+py -m pylint *.py routes modules --fail-under=10.0
 ```
 
 ### Running Tests

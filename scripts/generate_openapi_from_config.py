@@ -36,12 +36,14 @@ def compute_permission_metadata(permissions: List[Dict[str, Any]]):
         if value is None:
             bit = p.get("bit")
             value = (1 << bit) if isinstance(bit, int) else None
-        example_perms.append({
-            "name": p.get("name"),
-            "bit": p.get("bit"),
-            "value": value,
-            "description": p.get("description", ""),
-        })
+        example_perms.append(
+            {
+                "name": p.get("name"),
+                "bit": p.get("bit"),
+                "value": value,
+                "description": p.get("description", ""),
+            }
+        )
     return total, max_value, example_perms
 
 
@@ -68,7 +70,7 @@ def update_api_key_schema(spec: Dict[str, Any], permissions: List[Dict[str, Any]
     perms_prop["description"] = "\n".join(lines)
 
 
-def recursive_update_examples(node: Any, total: int, max_value: int, example_perms: Any):
+def recursive_update_examples(node: Any, total: int, max_value: int, example_perms: Any):  # NOSONAR
     # Recursively find 'example' dicts and update keys inside those example dicts.
     # Specifically looks for 'permissions', 'total_permissions', and 'max_value'.
     if isinstance(node, dict):
@@ -146,9 +148,7 @@ def main() -> int:
 
     # Update CreateAPIKey maximum if present
     try:
-        create_schema = (
-            spec["components"]["schemas"]["CreateAPIKey"]["properties"]["permissions"]
-        )
+        create_schema = spec["components"]["schemas"]["CreateAPIKey"]["properties"]["permissions"]
         create_schema["maximum"] = max_value
     except Exception:
         # ignore if path not present

@@ -23,7 +23,6 @@ import sqlite3
 import sys
 import time
 
-import requests
 import sentry_sdk
 from argon2 import PasswordHasher
 from cryptography.fernet import Fernet
@@ -327,18 +326,6 @@ except Exception as e:
     logger.critical(f"Database initialization failed: {e}")
     sys.exit(f"Database error: {e}")
 
-# Initialize periodic task manager but don't start it yet
-# It will be started by Gunicorn's post_fork hook (only in one worker)
-# or by the if __name__ == "__main__" block for direct execution
-# Note: send_discord_notification is defined later, but we pass it now (late binding)
-task_manager = PeriodicTaskManager(
-    db_handler=db_handler,
-    log_manager=log_manager,
-    send_discord_notification=lambda *args, **kwargs: send_discord_notification(*args, **kwargs),
-    db_path=db_path,
-)
-logger.info("Periodic task manager initialized (not started yet)")
-
 
 # ============================================================================
 # Signal Handler for Graceful Shutdown
@@ -496,44 +483,18 @@ github_handler = GitHubHandler(logger=logger)
 
 logger.info("Security and authentication handlers initialized")
 
-
-# ============================================================================
-# Discord and GitHub Helper Functions (delegate to handlers)
-# ============================================================================
-
-
-def verify_discord_webhook(webhook_url: str) -> bool:
-    """Delegate to DiscordHandler for webhook verification."""
-    return discord_handler.verify_webhook(webhook_url)
-
-
-def extract_repo_info_from_url(repo_url: str) -> tuple[str, str] | None:
-    """Delegate to GitHubHandler for URL parsing."""
-    return github_handler.extract_repo_info_from_url(repo_url)
-
-
-def fetch_repo_data_from_github(owner: str, repo: str) -> dict | None:
-    """Delegate to GitHubHandler for repository data fetching."""
-    return github_handler.fetch_repo_data(owner, repo)
-
-
-def send_discord_notification(
-    webhook_url: str,
-    event_data: dict | None = None,
-    event_type: str = "",
-    cleanup_type: str = "",
-    repo_name: str = "",
-    reason: str = "",
-) -> bool:
-    """Delegate to DiscordHandler for notification sending."""
-    return discord_handler.send_notification(
-        webhook_url=webhook_url,
-        event_data=event_data,
-        event_type=event_type,
-        cleanup_type=cleanup_type,
-        repo_name=repo_name,
-        reason=reason,
-    )
+# Initialize periodic task manager but don't start it yet
+# It will be started by Gunicorn's post_fork hook (only in one worker)
+# or by the if __name__ == "__main__" block for direct execution
+task_manager = PeriodicTaskManager(
+    db_handler=db_handler,
+    log_manager=log_manager,
+    discord_handler=discord_handler,
+    github_handler=github_handler,
+    send_discord_notification=discord_handler.send_notification,
+    db_path=db_path,
+)
+logger.info("Periodic task manager initialized (not started yet)")
 
 
 # ============================================================================
@@ -635,12 +596,10 @@ route_helpers = {
     "decrypt_secret": security_handler.decrypt_secret,
     "verify_github_signature": security_handler.verify_github_signature,
     "has_user_triggered_event_before": has_user_triggered_event_before,
-    "send_discord_notification": send_discord_notification,
+    "discord_handler": discord_handler,
+    "github_handler": github_handler,
     "add_user_event": add_user_event,
     "require_api_key_or_csrf": auth_handler.require_api_key_or_csrf,
-    "extract_repo_info_from_url": extract_repo_info_from_url,
-    "fetch_repo_data_from_github": fetch_repo_data_from_github,
-    "verify_discord_webhook": verify_discord_webhook,
     "encrypt_secret": security_handler.encrypt_secret,
     "verify_secret": security_handler.verify_secret,
     "require_admin_auth": auth_handler.require_admin_auth,
@@ -761,4 +720,4 @@ if __name__ == "__main__":
     logger.info("Periodic tasks started (direct execution mode)")
 
     logger.info(f"Starting {config.APP_NAME} v{config.APP_VERSION} on port 5000")
-    app.run(host="0.0.0.0", port=5000, debug=True)
+    app.run(host="0.0.0.0", port=5000, debug=False)
