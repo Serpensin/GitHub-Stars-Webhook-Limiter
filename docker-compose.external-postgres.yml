@@ -76,7 +76,7 @@ services:
       POSTGRES_DB: starlimiter
       POSTGRES_USER: starlimiter
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-Kp9mN4xR7jL2wQ5vH8sT3yB6nF1cZ0eA}
-    image: github-events-limiter
+    image: ghcr.io/serpensin/github-stars-webhook-limiter:latest
     volumes:
       - logs:/app/GitHub_Events_Limiter/logs  # Persists application logs
     healthcheck:

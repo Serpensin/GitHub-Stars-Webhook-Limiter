@@ -21,7 +21,7 @@ services:
       # POSTGRES_USER: starlimiter
       # POSTGRES_PASSWORD: your_secure_password
       # If any are missing, SQLite will be used instead
-    image: github-events-limiter
+    image: ghcr.io/serpensin/github-stars-webhook-limiter:latest
     volumes:
       - data:/app/GitHub_Events_Limiter  # Persists database and logs across container restarts
     healthcheck:
