@@ -6,16 +6,18 @@ WORKDIR /app
 # Install build dependencies (including PostgreSQL development libraries)
 RUN apk add --no-cache \
     build-base \
+    cargo \
     libffi-dev \
     linux-headers \
     openssl-dev \
-    postgresql-dev
+    postgresql-dev \
+    rust
 
 # Copy and install Python dependencies
 COPY requirements.txt .
 RUN python -m pip install --upgrade pip && \
     pip install --upgrade setuptools wheel && \
-    pip install --prefix=/install --no-warn-script-location \
+    PIP_ONLY_BINARY=cryptography pip install --prefix=/install --no-warn-script-location \
         -r requirements.txt \
         gunicorn gevent greenlet
 
@@ -36,8 +38,8 @@ COPY modules/ ./modules/
 COPY LICENSE.txt .
 COPY README.md .
 
-# Install runtime dependencies (including PostgreSQL server and client)
-RUN apk add --no-cache \
+# Remove build dependencies and keep only runtime deps (plus PostgreSQL runtime)
+RUN apk del build-base linux-headers rust cargo postgresql-dev && apk add --no-cache \
     curl \
     libpq \
     libstdc++ \

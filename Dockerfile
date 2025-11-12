@@ -4,13 +4,13 @@ FROM python:3.13-alpine AS builder
 WORKDIR /app
 
 # Install build dependencies
-RUN apk add --no-cache build-base libffi-dev linux-headers openssl-dev
+RUN apk add --no-cache build-base cargo libffi-dev linux-headers openssl-dev rust
 
 # Copy and install Python dependencies
 COPY requirements.txt .
 RUN python -m pip install --upgrade pip && \
     pip install --upgrade setuptools wheel && \
-    pip install --prefix=/install --no-warn-script-location \
+    PIP_ONLY_BINARY=cryptography pip install --prefix=/install --no-warn-script-location \
         -r requirements.txt \
         gunicorn gevent greenlet
 
@@ -31,8 +31,8 @@ COPY modules/ ./modules/
 COPY LICENSE.txt .
 COPY README.md .
 
-# Install only runtime dependencies
-RUN apk add --no-cache curl libstdc++
+# Remove build dependencies and keep only runtime deps
+RUN apk del build-base linux-headers rust cargo && apk add --no-cache curl libstdc++
 
 # Copy installed Python packages from builder
 COPY --from=builder /install /usr/local
