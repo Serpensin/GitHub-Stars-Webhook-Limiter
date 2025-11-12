@@ -11,15 +11,32 @@ Public-facing routes:
 - /webhook: GitHub webhook handler
 """
 
+import os
 import secrets
-from typing import Any, Callable, Optional
+import sys
+import time
+from typing import Any, Callable, Literal, Optional
 
-from flask import Blueprint, jsonify, render_template, request, send_file, session
+# Add .config folder to path before importing config and modules
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".config"))
+
+import config  # type: ignore
+from flask import (  # noqa: E402
+    Blueprint,
+    jsonify,
+    render_template,
+    request,
+    send_file,
+    session,
+)
+
+from modules.DatabaseWrapper import DatabaseWrapper  # noqa: E402
 
 web_bp = Blueprint("web", __name__)
 
 # These will be set by main.py when registering blueprints
 logger: Optional[Any] = None
+db_wrapper: Optional[DatabaseWrapper] = None
 get_db: Optional[Callable[[], Any]] = None
 get_repository_by_id: Optional[Callable[[int], Optional[dict[str, Any]]]] = None
 decrypt_secret: Optional[Callable[[bytes], str]] = None
@@ -34,6 +51,7 @@ get_top_users: Optional[Callable[[str, int], list[dict]]] = None
 
 def init_web_routes(
     _logger,
+    _db_type: Literal["sqlite", "postgresql"],
     _get_repository_by_id,
     _decrypt_secret,
     _verify_github_signature,
@@ -46,11 +64,12 @@ def init_web_routes(
     _get_top_users=None,
 ):
     """Initialize route dependencies"""
-    global logger, get_db, get_repository_by_id, decrypt_secret, verify_github_signature
+    global logger, db_wrapper, get_db, get_repository_by_id, decrypt_secret, verify_github_signature
     global has_user_triggered_event_before, discord_handler, add_user_event
     global increment_stat, get_all_stats, get_top_users
 
     logger = _logger
+    db_wrapper = DatabaseWrapper(_db_type)
     get_db = _get_db
     get_repository_by_id = _get_repository_by_id
     decrypt_secret = _decrypt_secret
@@ -73,10 +92,6 @@ def index():
     Generates a unique CSRF token for this session to prevent CSRF attacks.
     Also initializes timestamp for token expiry validation.
     """
-    import time
-
-    import config  # type: ignore  # imported here to avoid import order issues
-
     try:
         # Generate CSRF token if not already in session
         if "csrf_token" not in session:
@@ -105,6 +120,82 @@ def index():
         )
 
 
+@web_bp.route("/health")
+def health():
+    """
+    Health check endpoint for monitoring and container orchestration.
+    Returns JSON with application status and database connectivity.
+    Designed to be called with User-Agent: Healthcheck for filtered logging.
+
+    Returns:
+        - 200 OK if both app and database are healthy
+        - 503 Service Unavailable if database is unreachable
+    """
+    # Determine log level based on User-Agent
+    user_agent = request.headers.get("User-Agent", "")
+    is_healthcheck_agent = user_agent == "Healthcheck"
+
+    if logger:
+        if is_healthcheck_agent:
+            logger.debug(f"Health check from {request.remote_addr}")
+        else:
+            logger.info(f"Health check from {request.remote_addr} (User-Agent: {user_agent})")
+
+    # Check database connectivity
+    db_status = "unknown"
+    db_type = "unknown"
+    db_error = None
+
+    try:
+        if get_db and db_wrapper:
+            db = get_db()
+            db_type = db_wrapper.db_type
+
+            # Try a simple query to verify database is accessible
+            cursor = db.cursor()
+            cursor.execute("SELECT 1")
+            cursor.fetchone()
+            cursor.close()
+
+            db_status = "healthy"
+            if logger and not is_healthcheck_agent:
+                logger.debug(f"Database health check passed ({db_type})")
+
+    except Exception as e:
+        db_status = "unhealthy"
+        db_error = str(e)
+        if logger:
+            logger.error(f"Database health check failed: {e}")
+
+    # Determine overall status
+    overall_status = "healthy" if db_status == "healthy" else "unhealthy"
+    http_status = 200 if db_status == "healthy" else 503
+
+    response_data = {
+        "status": overall_status,
+        "app": config.APP_NAME,
+        "version": config.APP_VERSION,
+        "database": {
+            "type": db_type,
+            "status": db_status,
+        },
+    }
+
+    # Include error details only if database is unhealthy
+    if db_error:
+        response_data["database"]["error"] = db_error
+
+    # Create response with cache control headers
+    response = jsonify(response_data)
+    response.status_code = http_status
+
+    # Set cache control headers to allow caching for max 10 seconds
+    # This prevents excessive database checks while ensuring timely health updates
+    response.headers["Cache-Control"] = "public, max-age=10, must-revalidate"
+
+    return response
+
+
 @web_bp.route("/docs")
 def docs():
     """API documentation page (Redoc UI)"""
@@ -117,8 +208,6 @@ def stats_page():
     Public statistics page showing system statistics.
     Generates CSRF token for API access.
     """
-    import time
-
     try:
         # Generate CSRF token if not already in session
         if "csrf_token" not in session:
@@ -154,8 +243,6 @@ def spec():
     Serves the OpenAPI specification file as plain text in browser.
     Returns the YAML file for agents and other consumers.
     """
-    import os
-
     spec_path = os.path.join(os.path.dirname(__file__), "..", "static", "openapi.yaml")
     return send_file(
         spec_path,
@@ -170,8 +257,6 @@ def license_file():
     """
     Serves the LICENSE.txt file with HTML formatting.
     """
-    import os
-
     license_path = os.path.join(os.path.dirname(__file__), "..", "LICENSE.txt")
 
     # Read the license file
@@ -263,8 +348,6 @@ def handle_webhook():  # pylint: disable=too-many-return-statements,too-many-bra
 
     # Update last_event_received timestamp for this repository
     try:
-        import time
-
         db = get_db()
         db.execute(
             "UPDATE repositories SET last_event_received = ? WHERE repo_id = ?",
@@ -324,24 +407,13 @@ def handle_webhook():  # pylint: disable=too-many-return-statements,too-many-bra
 
         # Update user statistics - valid event
         try:
-            import time
-
             db = get_db()
+            assert db_wrapper is not None
+            query = db_wrapper.build_upsert_user_statistics_valid()
             db.execute(
-                """
-                INSERT INTO user_statistics (
-                    github_user_id, github_username, valid_events, last_event_timestamp
-                )
-                VALUES (?, ?, 1, ?)
-                ON CONFLICT(github_user_id) DO UPDATE SET
-                    github_username = ?,
-                    valid_events = valid_events + 1,
-                    last_event_timestamp = ?
-                """,
+                query,
                 (
                     sender_id,
-                    sender_login,
-                    int(time.time()),
                     sender_login,
                     int(time.time()),
                 ),
@@ -381,24 +453,13 @@ def handle_webhook():  # pylint: disable=too-many-return-statements,too-many-bra
 
     # Duplicate event - update user statistics as invalid
     try:
-        import time
-
         db = get_db()
+        assert db_wrapper is not None
+        query = db_wrapper.build_upsert_user_statistics_invalid()
         db.execute(
-            """
-            INSERT INTO user_statistics (
-                github_user_id, github_username, invalid_events, last_event_timestamp
-            )
-            VALUES (?, ?, 1, ?)
-            ON CONFLICT(github_user_id) DO UPDATE SET
-                github_username = ?,
-                invalid_events = invalid_events + 1,
-                last_event_timestamp = ?
-            """,
+            query,
             (
                 sender_id,
-                sender_login,
-                int(time.time()),
                 sender_login,
                 int(time.time()),
             ),

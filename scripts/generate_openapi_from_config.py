@@ -12,7 +12,15 @@ import importlib.util
 from pathlib import Path
 from typing import Any, Dict, List
 
-import yaml
+try:
+    import yaml
+except ImportError:
+    print("[!] PyYAML not found, installing...")
+    import subprocess
+    import sys
+
+    subprocess.check_call([sys.executable, "-m", "pip", "install", "PyYAML"])
+    import yaml
 
 
 def load_config(config_path: Path) -> List[Dict[str, Any]]:

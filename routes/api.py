@@ -213,6 +213,17 @@ def api_manage_repository():  # pylint: disable=too-many-return-statements # NOS
         discord_webhook_url = data.get("discord_webhook_url", "").strip()
         enabled_events = data.get("enabled_events", "").strip()
 
+        # Security: Validate input lengths to prevent DoS
+        if (
+            len(repo_url) > 500
+            or len(secret) > 500
+            or len(discord_webhook_url) > 500
+            or len(enabled_events) > 100
+        ):
+            if logger:
+                logger.warning("API: Add repository rejected - input too long")
+            return jsonify({"error": "Input values exceed maximum allowed length"}), 400
+
         # Validate inputs
         if not all([repo_url, secret, discord_webhook_url, enabled_events]):
             if logger:
@@ -409,13 +420,27 @@ def api_manage_repository():  # pylint: disable=too-many-return-statements # NOS
                 )
             return jsonify({"error": "No updates provided"}), 400
 
-        updates.append("updated_at = CURRENT_TIMESTAMP")
+        # Security: Use pre-defined allowed columns only to prevent SQL injection
+        allowed_columns = {
+            "secret_encrypted": "secret_encrypted = ?",
+            "discord_webhook_url": "discord_webhook_url = ?",
+            "enabled_events": "enabled_events = ?",
+            "updated_at": "updated_at = CURRENT_TIMESTAMP",
+        }
+
+        safe_updates = []
+        for update in updates:
+            column = update.split(" = ")[0]
+            if column in allowed_columns:
+                safe_updates.append(allowed_columns[column])
 
         params.append(repo_config["repo_id"])
 
         # Update database
         try:
-            db.execute(f"UPDATE repositories SET {', '.join(updates)} WHERE repo_id = ?", params)
+            db.execute(
+                f"UPDATE repositories SET {', '.join(safe_updates)} WHERE repo_id = ?", params
+            )
             if logger:
                 logger.info(
                     "API: Repository %s (ID: %s) updated successfully - Changed: %s",

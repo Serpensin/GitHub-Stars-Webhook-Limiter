@@ -9,7 +9,8 @@
     <link rel="stylesheet" href="/static/style.css">
     <script type="module">
         // CSRF token for API authentication
-        globalThis.CSRF_TOKEN = "{{ csrf_token }}";
+        // Sanitized to prevent XSS via Jinja2 escaping
+        globalThis.CSRF_TOKEN = {{ csrf_token | tojson }};
         
         // Generate a cryptographically secure random nonce for replay protection
         function generateNonce() {

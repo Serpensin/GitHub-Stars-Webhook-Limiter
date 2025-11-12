@@ -20,6 +20,7 @@ Usage:
 """
 
 import logging
+import re
 
 import requests
 
@@ -88,6 +89,15 @@ class GitHubHandler:
                 }
         """
         try:
+            # Security: Validate owner and repo names to prevent SSRF and path traversal
+            # Only allow alphanumeric, hyphens, underscores, and dots
+            if not re.match(r"^[a-zA-Z0-9._-]+$", owner) or not re.match(
+                r"^[a-zA-Z0-9._-]+$", repo
+            ):
+                if self.logger:
+                    self.logger.warning(f"Invalid owner/repo name format: {owner}/{repo}")
+                return None
+
             if self.logger:
                 self.logger.debug(f"Fetching repository data from GitHub: {owner}/{repo}")
 

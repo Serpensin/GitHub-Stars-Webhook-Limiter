@@ -9,8 +9,15 @@
 //
 // SECURITY RATIONALE:
 // - Session cookies: Good for web UIs (automatic, HTTP-only, SameSite protection)
+// - CSRF tokens: Prevent external API calls to login endpoint
 // - API keys: Better for APIs (CSRF-proof, stateless, granular control, cross-origin)
 // - This separation follows industry best practices
+
+// Get CSRF token from meta tag
+function getCSRFToken() {
+    const meta = document.querySelector('meta[name="csrf-token"]');
+    return meta ? meta.getAttribute('content') : null;
+}
 
 // State
 let isAuthenticated = false;
@@ -44,6 +51,42 @@ let timerDisplay = null;
 let sessionTimer = null;
 let timeoutBanner = null;
 
+// Helper functions - MUST be in global scope so they can be called from anywhere
+function _permId(name) {
+    return 'perm-' + String(name).replace(/[^A-Za-z0-9_\-]/g, '-');
+}
+
+function _editPermId(name) {
+    return 'edit-perm-' + String(name).replace(/[^A-Za-z0-9_\-]/g, '-');
+}
+
+// Enable/disable the generate button depending on selected permissions
+function updateGenerateBtnState() {
+    const adminKeyCheckbox = document.getElementById('is-admin-key');
+    const generateBtn = document.getElementById('generate-key-btn');
+    
+    if (!generateBtn) return; // Guard against calling before DOM is ready
+    
+    let anyChecked = false;
+    if (adminKeyCheckbox && adminKeyCheckbox.checked) anyChecked = true;
+    if (!anyChecked && window.permissionsConfig && Array.isArray(window.permissionsConfig)) {
+        for (const perm of window.permissionsConfig) {
+            const el = document.getElementById(_permId(perm.name));
+            if (el && el.checked) { anyChecked = true; break; }
+        }
+    }
+
+    if (anyChecked) {
+        generateBtn.disabled = false;
+        generateBtn.textContent = 'Generate API Key';
+        generateBtn.title = '';
+    } else {
+        generateBtn.disabled = true;
+        generateBtn.textContent = 'Select at least one permission';
+        generateBtn.title = 'Please select at least one permission or enable admin key';
+    }
+}
+
 // Initialize
 document.addEventListener('DOMContentLoaded', () => {
     // Get timer elements after DOM is loaded
@@ -51,8 +94,20 @@ document.addEventListener('DOMContentLoaded', () => {
     sessionTimer = document.getElementById('session-timer');
     timeoutBanner = document.getElementById('timeout-banner');
     
-    // Try to load keys to check if already authenticated
-    checkAuthentication();
+    // Check authentication status from server
+    // Server tells us if there's an active admin session
+    if (window.SERVER_AUTH_STATUS === true) {
+        // User has valid session, show dashboard and load keys
+        isAuthenticated = true;
+        sessionStartTime = Date.now();
+        sessionExpiredByTimeout = false;
+        showDashboard();
+        startSessionTimer();
+        loadKeys();
+    } else {
+        // No active session, show login form
+        showLogin();
+    }
 
     // Whitelist allowed characters in key name field
     const keyNameInput = document.getElementById('key-name');
@@ -65,57 +120,27 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         });
     }
-
-    // Admin key checkbox and generate button
-    const adminKeyCheckbox = document.getElementById('is-admin-key');
-    const generateBtn = document.getElementById('generate-key-btn');
-
-    // Helper to sanitize permission names into element ids
-    function _permId(name) {
-        return 'perm-' + String(name).replace(/[^A-Za-z0-9_\-]/g, '-');
-    }
-
-    function _editPermId(name) {
-        return 'edit-perm-' + String(name).replace(/[^A-Za-z0-9_\-]/g, '-');
-    }
-
-    // Enable/disable the generate button depending on selected permissions
-    function updateGenerateBtnState() {
-        let anyChecked = false;
-        if (adminKeyCheckbox && adminKeyCheckbox.checked) anyChecked = true;
-        if (!anyChecked && window.permissionsConfig && Array.isArray(window.permissionsConfig)) {
-            for (const perm of window.permissionsConfig) {
-                const el = document.getElementById(_permId(perm.name));
-                if (el && el.checked) { anyChecked = true; break; }
-            }
-        }
-
-        if (anyChecked) {
-            generateBtn.disabled = false;
-            generateBtn.textContent = 'Generate API Key';
-            generateBtn.title = '';
-        } else {
-            generateBtn.disabled = true;
-            generateBtn.textContent = 'Select at least one permission';
-            generateBtn.title = 'Please select at least one permission or enable admin key';
-        }
-    }
 });
 
 // Login
 loginForm.addEventListener('submit', async (e) => {
     e.preventDefault();
     const password = document.getElementById('admin-password').value;
+    const csrfToken = getCSRFToken();
+
+    if (!csrfToken) {
+        showError('Security token missing. Please refresh the page.');
+        return;
+    }
 
     try {
         const response = await fetch('/admin/api/login', {
             method: 'POST',
             credentials: 'same-origin',
             headers: {
-                'Content-Type': 'application/json',
-                'X-Internal-Secret': window.INTERNAL_SECRET
+                'Content-Type': 'application/json'
             },
-            body: JSON.stringify({ password })
+            body: JSON.stringify({ password, csrf_token: csrfToken })
         });
 
         if (response.ok) {
@@ -140,10 +165,7 @@ logoutBtn.addEventListener('click', async () => {
     try {
         await fetch('/admin/api/logout', {
             method: 'POST',
-            credentials: 'same-origin',
-            headers: {
-                'X-Internal-Secret': window.INTERNAL_SECRET
-            }
+            credentials: 'same-origin'
         });
         sessionExpiredByTimeout = false; // User initiated logout, not a timeout
         performLogout();
@@ -395,7 +417,12 @@ function renderPermissionCheckboxes() {
     }
 
     // Ensure admin checkbox also updates the button state
-    if (adminKeyCheckbox) adminKeyCheckbox.addEventListener('change', updateGenerateBtnState);
+    const adminKeyCheckbox = document.getElementById('is-admin-key');
+    if (adminKeyCheckbox) {
+        // Remove any existing listeners to avoid duplicates
+        adminKeyCheckbox.removeEventListener('change', updateGenerateBtnState);
+        adminKeyCheckbox.addEventListener('change', updateGenerateBtnState);
+    }
     // initial state
     updateGenerateBtnState();
 }
@@ -598,8 +625,14 @@ function renderKeys(keys) {
     });
     
     table.appendChild(tbody);
+    
+    // Create wrapper for responsive scrolling
+    const wrapper = document.createElement('div');
+    wrapper.className = 'keys-table-wrapper';
+    wrapper.appendChild(table);
+    
     keysList.innerHTML = '';
-    keysList.appendChild(table);
+    keysList.appendChild(wrapper);
     updateBulkActions();
 }
 

@@ -21,29 +21,38 @@ Usage:
     task_manager.start_all_tasks()
 """
 
+import os
 import sqlite3
 import sys
 import threading
 import time
+from datetime import datetime
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Literal, Optional, Union
 
-from CustomModules.database_handler import SQLiteDatabaseHandler
-from CustomModules.log_handler import LogManager
+# PostgreSQL imports (optional - only needed if using PostgreSQL)
+try:
+    import psycopg
+    from psycopg.rows import dict_row as psycopg_dict_row
+except ImportError:
+    psycopg = None  # type: ignore
+    psycopg_dict_row = None  # type: ignore
 
-# Import config module
+# Import config module (third-party) - must be before local imports
 config_path = Path(__file__).parent.parent / ".config"
 if str(config_path) not in sys.path:
     sys.path.insert(0, str(config_path))
-import config  # type: ignore  # noqa: E402
+import config  # type: ignore  # noqa: E402, E501
+
+from CustomModules.database_handler import (  # noqa: E402
+    SQLiteDatabaseHandler,
+    SyncDatabaseHandler,
+)
+from CustomModules.log_handler import LogManager  # noqa: E402
+from modules.DatabaseWrapper import DatabaseWrapper  # noqa: E402
 
 # SQL query constants to avoid duplication
 _SQL_GET_LAST_RUN = "SELECT last_run FROM cleanup_tasks WHERE task_name = ?"
-_SQL_UPDATE_LAST_RUN = """
-    INSERT INTO cleanup_tasks (task_name, last_run)
-    VALUES (?, ?)
-    ON CONFLICT(task_name) DO UPDATE SET last_run = ?
-    """
 
 
 class PeriodicTaskManager:
@@ -58,28 +67,35 @@ class PeriodicTaskManager:
 
     def __init__(
         self,
-        db_handler: SQLiteDatabaseHandler,
+        db_handler: Union[SQLiteDatabaseHandler, SyncDatabaseHandler],
         log_manager: LogManager,
         discord_handler,
         github_handler,
         log_name: str = "periodic_tasks",
         send_discord_notification=None,
-        db_path: Optional[str] = None,
+        db_info: str = "",
+        db_type: Literal["sqlite", "postgresql"] = "sqlite",
     ):
         """
         Initialize the periodic task manager.
 
         Args:
-            db_handler: DatabaseHandler instance for database operations
+            db_handler: SQLiteDatabaseHandler or SyncDatabaseHandler
+                instance for database operations
             log_manager: LogManager instance for creating logger
             discord_handler: DiscordHandler instance for Discord webhook operations
             github_handler: GitHubHandler instance for GitHub API operations
             log_name: Name for the logger (default: "periodic_tasks")
             send_discord_notification: Function to send Discord notifications for cleanup
-            db_path: Path to the SQLite database file for direct access
+            db_info: Database path (SQLite) or connection string (PostgreSQL)
+            db_type: "sqlite" or "postgresql"
         """
         self.db_handler = db_handler
-        self.db_path = db_path  # Store the database path for direct SQLite access
+        self.db_info = (
+            db_info  # Store the database info (path for SQLite, connection string for PostgreSQL)
+        )
+        self.db_type = db_type  # Store the database type
+        self.db_wrapper = DatabaseWrapper(db_type)  # Create database wrapper for SQL abstraction
         self.log_manager = log_manager
         self.log_name = log_name
         self.logger = log_manager.get_logger(log_name)
@@ -115,9 +131,27 @@ class PeriodicTaskManager:
         # Create a logger for this specific task
         logger_name = f"{self.log_name}.{task_name.replace(' ', '_')}"
         task_logger = self.log_manager.get_logger(logger_name)
+        
+        # Remove duplicate handlers (LogManager may add handlers on each get_logger call)
+        if len(task_logger.handlers) > 1:
+            # Keep only the first handler, remove duplicates
+            task_logger.handlers = task_logger.handlers[:1]
+        
         self.task_loggers[task_name] = task_logger
 
         self.tasks.append((task_func, interval, task_name))
+
+    def _update_cleanup_task_timestamp(self, task_name: str) -> None:
+        """
+        Update the last_run timestamp for a cleanup task.
+        Uses DatabaseWrapper to handle database-specific timestamp conversion.
+
+        Args:
+            task_name: Name of the cleanup task
+        """
+        current_time = self.db_wrapper.timestamp_value()
+        query = self.db_wrapper.build_insert_cleanup_task()
+        self._execute_sql(query, (task_name, current_time, current_time))
 
     def cleanup_expired_rate_limits(self, logger) -> None:
         """
@@ -129,16 +163,11 @@ class PeriodicTaskManager:
         """
         try:
             # Calculate the cutoff time (1 hour ago)
-            one_hour_ago = int(time.time()) - 3600
+            one_hour_ago = self.db_wrapper.timestamp_value() - 3600
 
             # Delete entries where first request was more than 1 hour ago
-            deleted_count = self._execute_sql(
-                """
-                DELETE FROM api_rate_limit_tracking
-                WHERE first_request_time < ?
-                """,
-                (one_hour_ago,),
-            )
+            query = self.db_wrapper.build_delete_old_rate_limits()
+            deleted_count = self._execute_sql(query, (one_hour_ago,))
 
             # Type assertion: when not fetching, _execute_sql returns int (rowcount)
             assert isinstance(deleted_count, int)
@@ -153,9 +182,8 @@ class PeriodicTaskManager:
         except Exception as e:
             if logger:
                 logger.error(f"Error during rate limit cleanup: {e}")
-                logger.error(f"Error during rate limit cleanup: {e}")
 
-    def cleanup_discord_webhooks(self, logger) -> None: # NOSONAR
+    def cleanup_discord_webhooks(self, logger) -> None:  # NOSONAR
         """
         Check Discord webhooks that haven't been checked in 28 days and verify they still exist.
         Runs once every 4 hours. Deletes repository entries if webhook is invalid.
@@ -174,6 +202,9 @@ class PeriodicTaskManager:
             if last_run:
                 assert isinstance(last_run, dict)
                 last_run_time = last_run["last_run"]
+                # Convert datetime to timestamp if PostgreSQL returns datetime object
+                if isinstance(last_run_time, datetime):
+                    last_run_time = int(last_run_time.timestamp())
                 four_hours_ago = int(time.time()) - (4 * 3600)
                 if last_run_time > four_hours_ago:
                     if logger:
@@ -184,24 +215,14 @@ class PeriodicTaskManager:
                 logger.info("Starting Discord webhook cleanup task")
 
             # Find unique webhook URLs that need checking (last_webhook_checked > 28 days or NULL)
-            twenty_eight_days_ago = int(time.time()) - (28 * 86400)
-            webhooks_to_check = self._execute_sql(
-                """
-                SELECT DISTINCT discord_webhook_url
-                FROM repositories
-                WHERE last_webhook_checked IS NULL OR last_webhook_checked < ?
-                """,
-                (twenty_eight_days_ago,),
-                fetch_all=True,
-            )
+            twenty_eight_days_ago = self.db_wrapper.timestamp_value() - (28 * 86400)
+            query = self.db_wrapper.build_select_webhooks_to_check()
+            webhooks_to_check = self._execute_sql(query, (twenty_eight_days_ago,), fetch_all=True)
 
             if not webhooks_to_check:
                 if logger:
                     logger.debug("No webhooks need checking")
-                self._execute_sql(
-                    _SQL_UPDATE_LAST_RUN,
-                    ("webhook_cleanup", int(time.time()), int(time.time())),
-                )
+                self._update_cleanup_task_timestamp("webhook_cleanup")
                 return
 
             # Type assertion: fetch_all returns list
@@ -230,13 +251,12 @@ class PeriodicTaskManager:
 
                     if is_valid:
                         # Webhook is valid - update last_webhook_checked
-                        self._execute_sql(
-                            (
-                                "UPDATE repositories SET last_webhook_checked = ? "
-                                "WHERE discord_webhook_url = ?"
-                            ),
-                            (int(time.time()), webhook_url),
+                        current_time = self.db_wrapper.timestamp_value()
+                        query = self.db_wrapper.build_update_repository_timestamp(
+                            "last_webhook_checked"
                         )
+                        query += "discord_webhook_url = ?"
+                        self._execute_sql(query, (current_time, webhook_url))
                         checked_count += 1
                         if logger:
                             logger.debug(f"Webhook verified: {webhook_url[:50]}...")
@@ -289,9 +309,9 @@ class PeriodicTaskManager:
                             INSERT INTO statistics (stat_name, stat_value)
                             VALUES ('repos_deleted_webhook_invalid', ?)
                             ON CONFLICT(stat_name) DO UPDATE SET
-                                stat_value = stat_value + ?
+                                stat_value = statistics.stat_value + EXCLUDED.stat_value
                             """,
-                            (deleted_repos, deleted_repos),
+                            (deleted_repos,),
                         )
 
                         if logger:
@@ -314,16 +334,13 @@ class PeriodicTaskManager:
                 )
 
             # Update last run time
-            self._execute_sql(
-                _SQL_UPDATE_LAST_RUN,
-                ("webhook_cleanup", int(time.time()), int(time.time())),
-            )
+            self._update_cleanup_task_timestamp("webhook_cleanup")
 
         except Exception as e:
             if logger:
                 logger.error(f"Error during webhook cleanup: {e}")
 
-    def cleanup_inactive_repositories(self, logger) -> None: # NOSONAR
+    def cleanup_inactive_repositories(self, logger) -> None:  # NOSONAR
         """
         Check repositories that haven't received events in 360+ days and verify they still exist.
         Runs once every 4 hours. Deletes repository entries if inactive or deleted.
@@ -342,6 +359,9 @@ class PeriodicTaskManager:
             if last_run:
                 assert isinstance(last_run, dict)
                 last_run_time = last_run["last_run"]
+                # Convert datetime to timestamp if PostgreSQL returns datetime object
+                if isinstance(last_run_time, datetime):
+                    last_run_time = int(last_run_time.timestamp())
                 four_hours_ago = int(time.time()) - (4 * 3600)
                 if last_run_time > four_hours_ago:
                     if logger:
@@ -352,24 +372,14 @@ class PeriodicTaskManager:
                 logger.info("Starting repository cleanup task")
 
             # Find repositories that need checking (last_repo_checked > 28 days or NULL)
-            twenty_eight_days_ago = int(time.time()) - (28 * 86400)
-            repos_to_check = self._execute_sql(
-                """
-                SELECT repo_id, repo_full_name, discord_webhook_url, last_event_received
-                FROM repositories
-                WHERE last_repo_checked IS NULL OR last_repo_checked < ?
-                """,
-                (twenty_eight_days_ago,),
-                fetch_all=True,
-            )
+            twenty_eight_days_ago = self.db_wrapper.timestamp_value() - (28 * 86400)
+            query = self.db_wrapper.build_select_repos_to_check()
+            repos_to_check = self._execute_sql(query, (twenty_eight_days_ago,), fetch_all=True)
 
             if not repos_to_check:
                 if logger:
                     logger.debug("No repositories need checking")
-                self._execute_sql(
-                    _SQL_UPDATE_LAST_RUN,
-                    ("repo_cleanup", int(time.time()), int(time.time())),
-                )
+                self._update_cleanup_task_timestamp("repo_cleanup")
                 return
 
             # Type assertion: fetch_all returns list
@@ -420,14 +430,8 @@ class PeriodicTaskManager:
                         deleted_inactive_count += 1
 
                         # Increment deletion statistic
-                        self._execute_sql(
-                            """
-                            INSERT INTO statistics (stat_name, stat_value)
-                            VALUES ('repos_deleted_inactive_360_days', 1)
-                            ON CONFLICT(stat_name) DO UPDATE SET
-                                stat_value = stat_value + 1
-                            """,
-                        )
+                        query = self.db_wrapper.build_increment_statistic_by_one()
+                        self._execute_sql(query, ("repos_deleted_inactive_360_days",))
                         continue
 
                 # Repository is not inactive - check if it still exists on GitHub
@@ -450,10 +454,12 @@ class PeriodicTaskManager:
 
                     if repo_data:
                         # Repository exists - update last_repo_checked
-                        self._execute_sql(
-                            "UPDATE repositories SET last_repo_checked = ? WHERE repo_id = ?",
-                            (int(time.time()), repo_id),
+                        current_time = self.db_wrapper.timestamp_value()
+                        query = self.db_wrapper.build_update_repository_timestamp(
+                            "last_repo_checked"
                         )
+                        query += "repo_id = ?"
+                        self._execute_sql(query, (current_time, repo_id))
                         checked_count += 1
                         if logger:
                             logger.debug(f"Repository verified: {repo_name}")
@@ -483,14 +489,8 @@ class PeriodicTaskManager:
                         deleted_gone_count += 1
 
                         # Increment deletion statistic
-                        self._execute_sql(
-                            """
-                            INSERT INTO statistics (stat_name, stat_value)
-                            VALUES ('repos_deleted_repo_gone', 1)
-                            ON CONFLICT(stat_name) DO UPDATE SET
-                                stat_value = stat_value + 1
-                            """,
-                        )
+                        query = self.db_wrapper.build_increment_statistic_by_one()
+                        self._execute_sql(query, ("repos_deleted_repo_gone",))
 
                 except Exception as e:
                     # Error checking repository - skip this repo
@@ -509,20 +509,13 @@ class PeriodicTaskManager:
                 )
 
             # Update last run time
-            self._execute_sql(
-                """
-                INSERT INTO cleanup_tasks (task_name, last_run)
-                VALUES (?, ?)
-                ON CONFLICT(task_name) DO UPDATE SET last_run = ?
-                """,
-                ("repo_cleanup", int(time.time()), int(time.time())),
-            )
+            self._update_cleanup_task_timestamp("repo_cleanup")
 
         except Exception as e:
             if logger:
                 logger.error(f"Error during repository cleanup: {e}")
 
-    def cleanup_inactive_api_keys(self, logger) -> None: # NOSONAR
+    def cleanup_inactive_api_keys(self, logger) -> None:  # NOSONAR
         """
         Delete non-admin API keys that haven't been used in 360+ days.
         Runs once every 4 hours.
@@ -541,6 +534,9 @@ class PeriodicTaskManager:
             if last_run:
                 assert isinstance(last_run, dict)
                 last_run_time = last_run["last_run"]
+                # Convert datetime to timestamp if PostgreSQL returns datetime object
+                if isinstance(last_run_time, datetime):
+                    last_run_time = int(last_run_time.timestamp())
                 four_hours_ago = int(time.time()) - (4 * 3600)
                 if last_run_time > four_hours_ago:
                     if logger:
@@ -553,28 +549,16 @@ class PeriodicTaskManager:
             # Find non-admin API keys that haven't been used in the configured number of days
             # or were created but never used for that period
             days = config.CLEANUP_INACTIVE_API_KEYS_DAYS
-            cleanup_threshold = int(time.time()) - (days * 86400)
+            cleanup_threshold = self.db_wrapper.timestamp_value() - (days * 86400)
+            query = self.db_wrapper.build_select_inactive_api_keys()
             inactive_keys = self._execute_sql(
-                """
-                SELECT id, name, last_used, created_at
-                FROM api_keys
-                WHERE is_admin_key = 0
-                AND (
-                    (last_used IS NOT NULL AND last_used < ?)
-                    OR (last_used IS NULL AND created_at < ?)
-                )
-                """,
-                (cleanup_threshold, cleanup_threshold),
-                fetch_all=True,
+                query, (cleanup_threshold, cleanup_threshold), fetch_all=True
             )
 
             if not inactive_keys:
                 if logger:
                     logger.debug("No inactive API keys to delete")
-                self._execute_sql(
-                    _SQL_UPDATE_LAST_RUN,
-                    ("api_key_cleanup", int(time.time()), int(time.time())),
-                )
+                self._update_cleanup_task_timestamp("api_key_cleanup")
                 return
 
             # Type assertion: fetch_all returns list
@@ -610,28 +594,14 @@ class PeriodicTaskManager:
 
             # Increment deletion statistic
             if deleted_count > 0:
-                self._execute_sql(
-                    """
-                    INSERT INTO statistics (stat_name, stat_value)
-                    VALUES ('api_keys_deleted_inactive_360_days', ?)
-                    ON CONFLICT(stat_name) DO UPDATE SET
-                        stat_value = stat_value + ?
-                    """,
-                    (deleted_count, deleted_count),
-                )
+                query = self.db_wrapper.build_increment_statistic()
+                self._execute_sql(query, ("api_keys_deleted_inactive_360_days", deleted_count))
 
             if logger:
                 logger.info(f"API key cleanup complete: deleted {deleted_count} inactive keys")
 
             # Update last run time
-            self._execute_sql(
-                """
-                INSERT INTO cleanup_tasks (task_name, last_run)
-                VALUES (?, ?)
-                ON CONFLICT(task_name) DO UPDATE SET last_run = ?
-                """,
-                ("api_key_cleanup", int(time.time()), int(time.time())),
-            )
+            self._update_cleanup_task_timestamp("api_key_cleanup")
 
         except Exception as e:
             if logger:
@@ -681,10 +651,10 @@ class PeriodicTaskManager:
         fetch_all: bool = False,
     ) -> Optional[dict[str, Any]] | list[dict[str, Any]] | int:
         """
-        Execute SQL query using direct SQLite connection (thread-safe).
+        Execute SQL query using the database handler.
 
-        This method is used by periodic tasks running in threads to avoid
-        "event loop already running" errors with the async database handler.
+        This method is used by periodic tasks running in threads to execute SQL queries
+        safely using SQLite.
 
         Args:
             query: SQL query to execute
@@ -698,20 +668,41 @@ class PeriodicTaskManager:
             - Otherwise: rowcount for INSERT/UPDATE/DELETE
 
         Raises:
-            ValueError: If db_path is not set
+            ValueError: If database operations fail
         """
-        if not self.db_path:
-            raise ValueError("Database path not set. Cannot execute SQL query.")
+        # Use direct connection for thread safety
+        if self.db_type == "sqlite":
+            conn = sqlite3.connect(self.db_info)
+            conn.row_factory = sqlite3.Row
+        else:
+            # PostgreSQL
+            postgres_host = os.environ.get("POSTGRES_HOST")
+            postgres_port = os.environ.get("POSTGRES_PORT", "5432")
+            postgres_db = os.environ.get("POSTGRES_DB")
+            postgres_user = os.environ.get("POSTGRES_USER")
+            postgres_password = os.environ.get("POSTGRES_PASSWORD")
 
-        conn = sqlite3.connect(self.db_path)
-        conn.row_factory = sqlite3.Row
+            conninfo = (
+                f"host={postgres_host} "
+                f"port={postgres_port} "
+                f"user={postgres_user} "
+                f"password={postgres_password} "
+                f"dbname={postgres_db}"
+            )
+            conn = psycopg.connect(conninfo, row_factory=psycopg_dict_row)  # type: ignore
+
         cursor = conn.cursor()
 
         try:
+            # Convert query for PostgreSQL if needed
+            if self.db_type == "postgresql" and params:
+                # Convert ? placeholders to %s for PostgreSQL
+                query = query.replace("?", "%s")
+
             if params:
-                cursor.execute(query, params)
+                cursor.execute(query, params)  # type: ignore
             else:
-                cursor.execute(query)
+                cursor.execute(query)  # type: ignore
 
             if fetch_one:
                 row = cursor.fetchone()

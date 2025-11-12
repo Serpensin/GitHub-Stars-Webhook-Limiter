@@ -9,7 +9,8 @@
     <script>
         // CSRF token for API authentication - session-specific
         // Even if someone sees this token, they can't use it from a different session
-        window.CSRF_TOKEN = "{{ csrf_token }}";
+        // Sanitized to prevent XSS via Jinja2 escaping
+        window.CSRF_TOKEN = {{ csrf_token | tojson }};
     </script>
 </head>
 <body>

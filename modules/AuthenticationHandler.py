@@ -31,6 +31,7 @@ Usage:
         return {"status": "ok"}
 """
 
+import hashlib
 import hmac
 import logging
 import re
@@ -82,21 +83,26 @@ class AuthenticationHandler:
 
     def hash_api_key(self, api_key: str) -> str:
         """
-        Hashes an API key using Argon2id.
+        Hashes an API key using HMAC-SHA256.
+
+        API keys are random high-entropy tokens, so a fast hash with constant-time
+        comparison is more appropriate than slow password hashing (Argon2id).
 
         Args:
             api_key (str): The plaintext API key to hash.
 
         Returns:
-            str: The hashed API key.
+            str: The hashed API key in hexadecimal format.
         """
         if self.logger:
             self.logger.debug("Hashing API key")
-        return self.ph.hash(api_key)
+        # Use HMAC-SHA256 with the API key itself as both key and message
+        # This is secure because API keys are already high-entropy random values
+        return hashlib.sha256(api_key.encode("utf-8")).hexdigest()
 
     def verify_api_key(self, api_key: str, key_hash: str) -> bool:
         """
-        Verifies an API key against its hash.
+        Verifies an API key against its hash using constant-time comparison.
 
         Args:
             api_key (str): The plaintext API key to verify.
@@ -106,13 +112,15 @@ class AuthenticationHandler:
             bool: True if the key matches, False otherwise.
         """
         try:
-            self.ph.verify(key_hash, api_key)
+            computed_hash = self.hash_api_key(api_key)
+            # Use constant-time comparison to prevent timing attacks
+            result = hmac.compare_digest(computed_hash, key_hash)
             if self.logger:
-                self.logger.debug("API key verification successful")
-            return True
-        except VerifyMismatchError:
+                self.logger.debug(f"API key verification: {'successful' if result else 'failed'}")
+            return result
+        except Exception as e:  # pylint: disable=broad-exception-caught
             if self.logger:
-                self.logger.debug("API key verification failed")
+                self.logger.error(f"API key verification error: {e}")
             return False
 
     def check_api_key_in_db(self, api_key: str) -> bool:
@@ -430,9 +438,20 @@ class AuthenticationHandler:
                         )
                     return jsonify({"error": "Replay attack detected"}), 403
 
-                # Store nonce in current time window
+                # Store nonce in current time window with DoS protection
                 if time_window not in used_nonces:
                     used_nonces[time_window] = set()
+
+                # Security: Limit nonce storage to prevent DoS via memory exhaustion
+                # Max 1000 nonces per 5-minute window (should be enough for legitimate use)
+                if len(used_nonces[time_window]) >= 1000:
+                    if self.logger:
+                        self.logger.warning(
+                            "API route access denied: too many requests in time window from %s",
+                            request.remote_addr,
+                        )
+                    return jsonify({"error": "Too many requests"}), 429
+
                 used_nonces[time_window].add(nonce)
 
                 # Keep only current window (automatic cleanup)

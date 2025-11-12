@@ -1,0 +1,78 @@
+# Builder stage
+FROM python:3.13-alpine AS builder
+
+WORKDIR /app
+
+# Install build dependencies (including PostgreSQL development libraries)
+RUN apk add --no-cache \
+    build-base \
+    libffi-dev \
+    linux-headers \
+    openssl-dev \
+    postgresql-dev
+
+# Copy and install Python dependencies
+COPY requirements.txt .
+RUN python -m pip install --upgrade pip && \
+    pip install --upgrade setuptools wheel && \
+    pip install --prefix=/install --no-warn-script-location \
+        -r requirements.txt \
+        gunicorn gevent greenlet
+
+# Final stage
+FROM python:3.13-alpine
+
+WORKDIR /app
+
+# Copy application files
+COPY *.py .
+COPY .config/ ./.config/
+COPY routes/ ./routes/
+COPY templates/ ./templates/
+COPY static/ ./static/
+COPY modules/ ./modules/
+
+# Copy License and README
+COPY LICENSE.txt .
+COPY README.md .
+
+# Install runtime dependencies (including PostgreSQL server and client)
+RUN apk add --no-cache \
+    curl \
+    libpq \
+    libstdc++ \
+    postgresql \
+    postgresql-client \
+    postgresql-contrib \
+    su-exec
+
+# Copy installed Python packages from builder
+COPY --from=builder /install /usr/local
+
+# Initialize PostgreSQL data directory
+RUN mkdir -p /var/lib/postgresql/data && \
+    chown -R postgres:postgres /var/lib/postgresql
+
+ENV TERM=xterm
+ENV PYTHONUNBUFFERED=1
+ENV PGDATA=/var/lib/postgresql/data
+
+ARG TARGETPLATFORM
+ARG BUILD_DATE
+ARG COMMIT
+
+# Copy entrypoint script
+COPY docker-entrypoint-postgresql.sh /usr/local/bin/
+RUN chmod +x /usr/local/bin/docker-entrypoint-postgresql.sh
+
+EXPOSE 5000 5432
+
+LABEL maintainer="Discord: pika.pika.no.mi (970119359840284743)"
+LABEL commit=$COMMIT
+LABEL description="Listens for GitHub star & watch events, notifies Discord on first-time interactions, with embedded PostgreSQL & Sentry support."
+LABEL release=$BUILD_DATE
+LABEL VERSION="2.0.0"
+LABEL url="https://github.com/Serpensin/GitHub-Stars-Webhook-Limiter"
+
+ENTRYPOINT ["/usr/local/bin/docker-entrypoint-postgresql.sh"]
+CMD ["gunicorn", "-c", ".config/gunicorn.conf.py", "main:app"]

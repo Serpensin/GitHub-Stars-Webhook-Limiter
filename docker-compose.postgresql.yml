@@ -1,0 +1,28 @@
+services:
+  cloudflared:
+    restart: unless-stopped
+    image: cloudflare/cloudflared:latest
+    command: tunnel --no-autoupdate run --token <YOUR_CLOUDFLARED_TOKEN>
+
+  app:
+    container_name: StarLimiter-PostgreSQL
+    restart: unless-stopped
+    env_file:
+      - .env  # Use .env file for sensitive environment variables
+    environment:
+      LOG_LEVEL: INFO  # Options: DEBUG, INFO, WARNING, ERROR, CRITICAL
+    image: github-events-limiter:postgresql
+    volumes:
+      - postgres_data:/var/lib/postgresql/data  # Persists PostgreSQL database
+      - logs:/app/GitHub_Events_Limiter/logs  # Persists application logs across container restarts
+    healthcheck:
+      test: ["CMD", "curl", "-f", "-A", "Healthcheck", "http://localhost:5000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    hostname: starlimiter
+
+volumes:
+  postgres_data:
+  logs:

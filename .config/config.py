@@ -137,14 +137,6 @@ PERMISSIONS = [
         "description": "Allows viewing system statistics and analytics",
         "endpoints": ["/api/stats"],
     },
-    {
-        "name": "Test",
-        "friendly_name": "Testing Access",
-        "bit": 10,
-        "value": 1024,
-        "description": "Grants full access to all testing endpoints",
-        "endpoints": ["/api/admin/login"],
-    },
 ]
 
 # Derive permission key list for BitmapHandler (order matters!)

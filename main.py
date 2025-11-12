@@ -18,8 +18,6 @@ import re
 import secrets
 import signal
 import sqlite3
-
-# Add .config folder to path for imports
 import sys
 import time
 
@@ -27,14 +25,25 @@ import sentry_sdk
 from argon2 import PasswordHasher
 from cryptography.fernet import Fernet
 from dotenv import load_dotenv
-from flask import Flask, g, render_template
+from flask import Flask, g, render_template, request, send_from_directory, session
 
+# PostgreSQL imports (optional - only needed if using PostgreSQL)
+try:
+    import psycopg
+    from psycopg.rows import dict_row as psycopg_dict_row
+    from psycopg_pool import ConnectionPool
+except ImportError:
+    psycopg = None  # type: ignore
+    ConnectionPool = None  # type: ignore
+    psycopg_dict_row = None  # type: ignore
+
+# Add .config folder to path for imports
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".config"))
 
 import config  # type: ignore  # config is in .config folder, added to path above
 
 from CustomModules.bitmap_handler import BitmapHandler
-from CustomModules.database_handler import SQLiteDatabaseHandler
+from CustomModules.database_handler import SQLiteDatabaseHandler, SyncDatabaseHandler
 from CustomModules.log_handler import LogManager
 from modules.AuthenticationHandler import AuthenticationHandler
 from modules.DiscordHandler import DiscordHandler
@@ -49,6 +58,113 @@ load_dotenv()
 os.makedirs(config.LOG_FOLDER, exist_ok=True)
 log_manager = LogManager(config.LOG_FOLDER, config.APP_NAME, config.LOG_LEVEL)
 logger = log_manager.get_logger(__name__)
+
+
+# ============================================================================
+# Database Connection Wrappers
+# ============================================================================
+
+
+class PostgreSQLCursorWrapper:
+    """Wrapper for PostgreSQL cursor that converts SQLite-style queries."""
+
+    def __init__(self, cursor):
+        self._cursor = cursor
+        self._lastrowid = None
+
+    def execute(self, query, params=None):
+        """Execute query with automatic parameter conversion."""
+        converted = query.replace("?", "%s")
+
+        # For INSERT statements, add RETURNING id to get lastrowid
+        if converted.strip().upper().startswith("INSERT"):
+            # Check if RETURNING clause already exists
+            if "RETURNING" not in converted.upper():
+                # Add RETURNING id before any trailing semicolon
+                converted = converted.rstrip().rstrip(";") + " RETURNING id"
+
+            # Execute and fetch the returned ID
+            result = (
+                self._cursor.execute(converted, params)
+                if params
+                else self._cursor.execute(converted)
+            )
+
+            # Fetch the returned ID
+            row = self._cursor.fetchone()
+            if row:
+                self._lastrowid = row[0] if isinstance(row, tuple) else row.get("id")
+
+            return result
+
+        return (
+            self._cursor.execute(converted, params) if params else self._cursor.execute(converted)
+        )
+
+    def fetchone(self):
+        """Fetch one row."""
+        return self._cursor.fetchone()
+
+    def fetchall(self):
+        """Fetch all rows."""
+        return self._cursor.fetchall()
+
+    @property
+    def rowcount(self):
+        """Return row count."""
+        return self._cursor.rowcount
+
+    @property
+    def description(self):
+        """Return cursor description."""
+        return self._cursor.description
+
+    @property
+    def lastrowid(self):
+        """Return the last inserted row ID."""
+        return self._lastrowid
+
+    def close(self):
+        """Close cursor."""
+        return self._cursor.close()
+
+
+class PostgreSQLConnectionWrapper:
+    """Wrapper that automatically converts SQLite queries to PostgreSQL syntax."""
+
+    def __init__(self, conn):
+        self._conn = conn
+
+    def execute(self, query, params=None):
+        """Execute with automatic query conversion."""
+        converted = query.replace("?", "%s")
+        return self._conn.execute(converted, params) if params else self._conn.execute(converted)
+
+    def cursor(self):
+        """Return wrapped cursor."""
+        base_cursor = self._conn.cursor()
+        return PostgreSQLCursorWrapper(base_cursor)
+
+    def commit(self):
+        """Commit transaction."""
+        return self._conn.commit()
+
+    def rollback(self):
+        """Rollback transaction."""
+        return self._conn.rollback()
+
+    def close(self):
+        """Close connection."""
+        return self._conn.close()
+
+    def get_connection(self):
+        """Return the underlying connection for pool management."""
+        return self._conn
+
+
+# ============================================================================
+# Validation and Configuration
+# ============================================================================
 
 
 def validate_argon2_hash(hash_string: str) -> bool:
@@ -111,7 +227,7 @@ if missing_vars or invalid_vars:
 
     logger.critical("")
     logger.critical("The application cannot start with invalid configuration.")
-    logger.critical("Run 'python generate_admin_password.py' to generate valid secrets.")
+    logger.critical("Run 'python .\\scripts\\generate_required_secrets.py' to generate valid secrets.")
     logger.critical("=" * 70)
 
     print("\nFATAL ERROR: Invalid environment configuration!")
@@ -128,7 +244,7 @@ if missing_vars or invalid_vars:
             print(f"  - {var}: {reason}")
 
     print("\n" + "=" * 70)
-    print("Run: python generate_admin_password.py")
+    print("Run 'python .\\scripts\\generate_required_secrets.py' to generate valid secrets.")
     print("Then add the generated values to your .env file or environment.")
     print("=" * 70 + "\n")
     sys.exit(1)
@@ -191,38 +307,93 @@ logger.info(f"Server start time: {SERVER_START_TIME}")
 
 os.makedirs(config.APP_NAME, exist_ok=True)
 
-# Initialize database path and handler
-db_path = os.path.join(config.APP_NAME, "data.db")
-logger.info(f"Initializing database at {os.path.abspath(db_path)}")
+# ============================================================================
+# Database Initialization
+# ============================================================================
 
-# Create DatabaseHandler instance for centralized database operations
-db_handler = SQLiteDatabaseHandler(db_path, logger)
+
+def initialize_database():
+    """
+    Initialize database handler based on environment variables.
+
+    Returns:
+        tuple: (db_handler, db_type, db_info)
+            - db_handler: Either SQLiteDatabaseHandler or SyncDatabaseHandler
+            - db_type: "sqlite" or "postgresql"
+            - db_info: Database path (SQLite) or connection string (PostgreSQL)
+    """
+    # Check for PostgreSQL environment variables
+    postgres_host = os.environ.get("POSTGRES_HOST")
+    postgres_port = os.environ.get("POSTGRES_PORT", "5432")
+    postgres_db = os.environ.get("POSTGRES_DB")
+    postgres_user = os.environ.get("POSTGRES_USER")
+    postgres_password = os.environ.get("POSTGRES_PASSWORD")
+
+    # Use PostgreSQL if all required variables are set
+    if all([postgres_host, postgres_db, postgres_user, postgres_password]):
+        db_type = "postgresql"
+        connection_string = (
+            f"postgresql://{postgres_user}:{postgres_password}@"
+            f"{postgres_host}:{postgres_port}/{postgres_db}"
+        )
+        logger.info(f"Using PostgreSQL database: {postgres_host}:{postgres_port}/{postgres_db}")
+        db_handler = SyncDatabaseHandler.create(connection_string, logger)
+        db_info = connection_string
+    else:
+        # Default to SQLite
+        db_type = "sqlite"
+        db_path = os.path.join(config.APP_NAME, "data.db")
+        logger.info(f"Using SQLite database at {os.path.abspath(db_path)}")
+        db_handler = SQLiteDatabaseHandler(db_path, logger)
+        db_info = db_path
+
+    return db_handler, db_type, db_info
+
+
+# Initialize database
+db_handler, db_type, db_info = initialize_database()
 
 # Initialize database schema
+# With preload_app=True in Gunicorn, this runs once in the master process before forking workers
 try:
     logger.info("Setting up database schema")
 
+    # Helper function to create table with PostgreSQL race condition handling
+    def create_table_safe(query: str, table_name: str):
+        """Create table with error handling for PostgreSQL race conditions"""
+        try:
+            db_handler.execute(query, commit=True, fetch=False)
+            logger.debug(f"{table_name} table created/verified")
+        except Exception as e:
+            error_msg = str(e).lower()
+            # Ignore "already exists" errors (can happen with multiple workers)
+            if "already exists" in error_msg or "duplicate" in error_msg:
+                logger.debug(f"{table_name} table already exists (race condition)")
+            else:
+                raise
+
+    # Define common SQL fragments for table creation
+    if db_type == "postgresql":
+        pk_def = "SERIAL PRIMARY KEY,"
+    else:
+        pk_def = "INTEGER PRIMARY KEY AUTOINCREMENT,"
+
     # Table for tracking starred/watched repos
-    db_handler.execute(
-        """
+    user_events_query = f"""
         CREATE TABLE IF NOT EXISTS user_events (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            id {pk_def}
             github_user_id INTEGER NOT NULL,
             repository_id INTEGER NOT NULL,
-            event_type TEXT NOT NULL,
+            event_type VARCHAR(64) NOT NULL,
             UNIQUE(github_user_id, repository_id, event_type)
         )
-        """,
-        commit=True,
-        fetch=False,
-    )
-    logger.debug("user_events table created/verified")
+        """
+    create_table_safe(user_events_query, "user_events")
 
     # Table for repository configurations
-    db_handler.execute(
-        """
+    repositories_query = f"""
         CREATE TABLE IF NOT EXISTS repositories (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            id {pk_def}
             repo_id INTEGER NOT NULL UNIQUE,
             repo_full_name TEXT NOT NULL,
             owner_id INTEGER NOT NULL,
@@ -235,19 +406,16 @@ try:
             last_repo_checked TIMESTAMP,
             last_webhook_checked TIMESTAMP
         )
-        """,
-        commit=True,
-        fetch=False,
-    )
+        """
+    create_table_safe(repositories_query, "repositories")
     logger.debug("repositories table created/verified")
 
     # Table for API keys (permissions as bitmap integer)
-    db_handler.execute(
-        """
+    api_keys_query = f"""
         CREATE TABLE IF NOT EXISTS api_keys (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            key_hash TEXT NOT NULL UNIQUE,
-            name TEXT NOT NULL,
+            id {pk_def}
+            key_hash VARCHAR(64) NOT NULL UNIQUE,
+            name VARCHAR(512) NOT NULL,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             last_used TIMESTAMP,
             is_active INTEGER DEFAULT 1,
@@ -255,15 +423,12 @@ try:
             rate_limit INTEGER DEFAULT 100,
             is_admin_key INTEGER DEFAULT 0
         )
-        """,
-        commit=True,
-        fetch=False,
-    )
-    logger.debug("api_keys table created/verified")
+        """
+    create_table_safe(api_keys_query, "api_keys")
 
     # Table for API rate limiting tracking
     # Stores only: key_id, first_request_time, request_count
-    db_handler.execute(
+    create_table_safe(
         """
         CREATE TABLE IF NOT EXISTS api_rate_limit_tracking (
             api_key_id INTEGER PRIMARY KEY,
@@ -272,41 +437,35 @@ try:
             FOREIGN KEY (api_key_id) REFERENCES api_keys(id) ON DELETE CASCADE
         )
         """,
-        commit=True,
-        fetch=False,
+        "api_rate_limit_tracking",
     )
-    logger.debug("api_rate_limit_tracking table created/verified")
 
     # Table for tracking when periodic cleanup tasks last ran
-    db_handler.execute(
+    create_table_safe(
         """
         CREATE TABLE IF NOT EXISTS cleanup_tasks (
-            task_name TEXT PRIMARY KEY,
+            task_name VARCHAR(255) PRIMARY KEY,
             last_run TIMESTAMP NOT NULL
         )
         """,
-        commit=True,
-        fetch=False,
+        "cleanup_tasks",
     )
-    logger.debug("cleanup_tasks table created/verified")
 
     # Table for storing cumulative statistics
-    db_handler.execute(
-        """
-        CREATE TABLE IF NOT EXISTS statistics (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            stat_name TEXT NOT NULL UNIQUE,
+    # Use UNLOGGED for PostgreSQL to skip WAL writes (statistics are not critical)
+    unlogged = "UNLOGGED " if db_type == "postgresql" else ""
+    statistics_query = f"""
+        CREATE {unlogged}TABLE IF NOT EXISTS statistics (
+            id {pk_def}
+            stat_name VARCHAR(255) NOT NULL UNIQUE,
             stat_value INTEGER DEFAULT 0,
             last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
-        """,
-        commit=True,
-        fetch=False,
-    )
-    logger.debug("statistics table created/verified")
+        """
+    create_table_safe(statistics_query, "statistics")
 
     # Table for per-user event statistics
-    db_handler.execute(
+    create_table_safe(
         """
         CREATE TABLE IF NOT EXISTS user_statistics (
             github_user_id INTEGER PRIMARY KEY,
@@ -316,15 +475,44 @@ try:
             last_event_timestamp TIMESTAMP
         )
         """,
-        commit=True,
-        fetch=False,
+        "user_statistics",
     )
     logger.debug("user_statistics table created/verified")
 
+    # ========================================================================
+    # Create performance indexes
+    # ========================================================================
+    logger.info("Creating database indexes for performance")
+
+    # Index for key_hash is automatically created by UNIQUE constraint - no need for explicit index
+
+    # Index for filtering active/inactive keys
+    create_table_safe(
+        "CREATE INDEX IF NOT EXISTS idx_api_keys_active ON api_keys(is_active)",
+        "idx_api_keys_active",
+    )
+
+    # Index for user_events lookups (supports UNIQUE constraint)
+    create_table_safe(
+        """CREATE INDEX IF NOT EXISTS idx_user_events_lookup
+           ON user_events(github_user_id, repository_id, event_type)""",
+        "idx_user_events_lookup",
+    )
+
+    # Index for repository lookups
+    create_table_safe(
+        "CREATE INDEX IF NOT EXISTS idx_repositories_repo_id ON repositories(repo_id)",
+        "idx_repositories_repo_id",
+    )
+
+    # Index for stat_name is automatically created by UNIQUE constraint - no need for explicit index
+
     logger.info("Database initialization completed successfully")
+        
 except Exception as e:
     logger.critical(f"Database initialization failed: {e}")
     sys.exit(f"Database error: {e}")
+
 
 
 # ============================================================================
@@ -367,15 +555,20 @@ class SignalHandler:
         logger.info(f"Received {signal_name}, initiating graceful shutdown...")
 
         try:
-            # Run WAL checkpoint before closing connections
-            logger.info("Running database WAL checkpoint...")
-            db_handler.checkpoint_wal()
-            logger.info("Database WAL checkpoint completed")
-
-            # Close all database connections in DatabaseHandler
-            logger.info("Closing database connections...")
+            # Close db_handler connection first
             db_handler.close()
             logger.info("Database connections closed")
+
+            # Perform WAL checkpoint only for SQLite
+            if db_type == "sqlite":
+                logger.info("Running database WAL checkpoint and truncate...")
+                conn = sqlite3.connect(db_info)
+                try:
+                    # TRUNCATE mode: checkpoint and remove WAL/SHM files
+                    conn.execute("PRAGMA wal_checkpoint(TRUNCATE);")
+                    logger.info("WAL checkpoint and truncate completed")
+                finally:
+                    conn.close()
 
             # Note: Periodic tasks run in daemon threads and will stop automatically
             logger.info("Periodic tasks will stop automatically (daemon threads)")
@@ -393,53 +586,183 @@ class SignalHandler:
 signal_handler = SignalHandler()
 
 
+# ============================================================================
+# Database Connection and Request Lifecycle
+# ============================================================================
+
+# PostgreSQL connection pool (global, shared across workers)
+_postgres_pool = None
+
+if db_type == "postgresql":
+    if ConnectionPool is None or psycopg_dict_row is None:
+        logger.error(
+            "PostgreSQL database type selected but psycopg_pool not installed. "
+            "Install with: pip install psycopg[pool]"
+        )
+        sys.exit("Missing PostgreSQL dependencies")
+
+    try:
+        postgres_host = os.environ.get("POSTGRES_HOST")
+        postgres_port = os.environ.get("POSTGRES_PORT", "5432")
+        postgres_db = os.environ.get("POSTGRES_DB")
+        postgres_user = os.environ.get("POSTGRES_USER")
+        postgres_password = os.environ.get("POSTGRES_PASSWORD")
+
+        conninfo = (
+            f"host={postgres_host} "
+            f"port={postgres_port} "
+            f"user={postgres_user} "
+            f"password={postgres_password} "
+            f"dbname={postgres_db}"
+        )
+
+        # Create connection pool with optimized settings
+        # min_size: Minimum connections kept alive
+        # max_size: Maximum connections per worker (4 workers * 25 = 100 total max)
+        # configure: Set row_factory for all connections from pool
+        _postgres_pool = ConnectionPool(
+            conninfo=conninfo,
+            min_size=2,  # Keep 2 connections warm per worker
+            max_size=25,  # Max 25 connections per worker
+            timeout=30.0,  # Wait up to 30s for a connection
+            kwargs={"row_factory": psycopg_dict_row},  # All connections use dict rows
+        )
+        logger.info("PostgreSQL connection pool initialized (min=2, max=25 per worker)")
+    except Exception as e:
+        logger.error(f"Failed to create PostgreSQL connection pool: {e}")
+        sys.exit(f"PostgreSQL connection pool error: {e}")
+
+
+def _create_sqlite_connection():
+    """
+    Create and configure a SQLite connection.
+
+    Returns:
+        sqlite3.Connection: Configured SQLite connection
+    """
+    conn = sqlite3.connect(
+        db_info,  # This is the SQLite db_path
+        timeout=10.0,  # Wait up to 10 seconds for locks
+        check_same_thread=False,  # Allow connection to be used across threads with gunicorn
+    )
+    conn.row_factory = sqlite3.Row
+
+    # Set optimized PRAGMA settings
+    # Note: WAL mode is already set during database initialization
+    try:
+        conn.execute("PRAGMA synchronous=NORMAL")  # Faster than FULL, still safe with WAL
+        conn.execute("PRAGMA cache_size=-32000")  # 32MB cache (reduced from 64MB for Docker)
+        conn.execute("PRAGMA temp_store=MEMORY")  # Store temp tables in memory
+        conn.execute("PRAGMA busy_timeout=10000")  # Wait up to 10s for locks
+    except sqlite3.Error as e:
+        logger.error(f"Error setting PRAGMA settings: {e}")
+
+    return conn
+
+
+def _create_postgresql_connection():
+    """
+    Create a PostgreSQL connection from pool or direct connection.
+
+    Returns:
+        PostgreSQLConnectionWrapper: Wrapped PostgreSQL connection
+    """
+    # Try to use connection pool first
+    if _postgres_pool:
+        base_conn = _postgres_pool.getconn()
+        # Store pool reference to return connection later
+        g.using_pool = True  # pylint: disable=assigning-non-slot
+    else:
+        # Fallback to direct connection if pool not available
+        postgres_host = os.environ.get("POSTGRES_HOST")
+        postgres_port = os.environ.get("POSTGRES_PORT", "5432")
+        postgres_db = os.environ.get("POSTGRES_DB")
+        postgres_user = os.environ.get("POSTGRES_USER")
+        postgres_password = os.environ.get("POSTGRES_PASSWORD")
+
+        conninfo = (
+            f"host={postgres_host} "
+            f"port={postgres_port} "
+            f"user={postgres_user} "
+            f"password={postgres_password} "
+            f"dbname={postgres_db}"
+        )
+
+        base_conn = psycopg.connect(conninfo, row_factory=psycopg_dict_row)  # type: ignore
+        g.using_pool = False  # pylint: disable=assigning-non-slot
+
+    return PostgreSQLConnectionWrapper(base_conn)
+
+
 def get_db():
     """
-    Retrieves a SQLite database connection for the current Flask application context.
+    Retrieves a database connection for the current Flask application context.
     Reuses connection for the entire request lifecycle.
     Connection is automatically committed and closed at request end.
+
+    Note: For PostgreSQL, we wrap the db_handler to provide a cursor-compatible interface.
+    For SQLite, we create a direct connection for Flask's request context.
+
+    Returns:
+        Connection object (sqlite3.Connection or wrapper for PostgreSQL)
     """
     if "db" not in g:
-        g.db = sqlite3.connect(
-            os.path.join(config.APP_NAME, "data.db"),
-            timeout=10.0,  # Wait up to 10 seconds for locks
-            check_same_thread=False,  # Allow connection to be used across threads with gunicorn
-        )
-        g.db.row_factory = sqlite3.Row
+        if db_type == "sqlite":
+            g.db = _create_sqlite_connection()
+        else:
+            g.db = _create_postgresql_connection()
 
-        # Set optimized PRAGMA settings
-        # Note: WAL mode is already set during database initialization
-        try:
-            g.db.execute("PRAGMA synchronous=NORMAL")  # Faster than FULL, still safe with WAL
-            g.db.execute("PRAGMA cache_size=-32000")  # 32MB cache (reduced from 64MB for Docker)
-            g.db.execute("PRAGMA temp_store=MEMORY")  # Store temp tables in memory
-            g.db.execute("PRAGMA busy_timeout=10000")  # Wait up to 10s for locks
-        except sqlite3.Error as e:
-            logger.warning(f"Error setting database PRAGMAs: {e}")
-
-        logger.debug("New database connection established")
     return g.db
+
+
+def convert_query_for_db(query: str) -> str:
+    """
+    Convert SQLite query syntax to PostgreSQL if needed.
+
+    Args:
+        query: SQL query string with ? placeholders (SQLite style)
+
+    Returns:
+        Converted query string for the current database type
+    """
+    if db_type == "postgresql":
+        # Convert ? placeholders to %s for PostgreSQL
+        return query.replace("?", "%s")
+    return query
 
 
 @app.teardown_appcontext
 def close_db(exception=None):  # pylint: disable=unused-argument
     """
     Commits and closes the database connection at the end of the Flask application context.
+    For PostgreSQL with pooling, returns the connection to the pool.
     All changes made during the request are committed here unless there was an exception.
     """
     db = g.pop("db", None)
+    using_pool = g.pop("using_pool", False)
+
     if db is not None:
         try:
             if exception is None:
                 # Only commit if no exception occurred
                 db.commit()
                 logger.debug("Database changes committed")
-        except Exception as e:
+        except Exception as e:  # pylint: disable=broad-except
             logger.error(f"Error committing database changes: {e}")
             db.rollback()
         finally:
-            db.close()
-            logger.debug("Database connection closed")
+            # For PostgreSQL with pool, return connection to pool
+            if using_pool and _postgres_pool:
+                # Get the underlying connection from wrapper
+                if hasattr(db, "get_connection"):
+                    _postgres_pool.putconn(db.get_connection())
+                    logger.debug("PostgreSQL connection returned to pool")
+                else:
+                    db.close()
+                    logger.debug("Database connection closed")
+            else:
+                db.close()
+                logger.debug("Database connection closed")
     if exception:
         logger.error(f"App context teardown with exception: {exception}")
 
@@ -472,6 +795,7 @@ auth_handler = AuthenticationHandler(
 # Initialize statistics handler for metrics tracking
 stats_handler = StatisticsHandler(
     get_db_func=get_db,
+    db_type=db_type,
     logger=logger,
 )
 
@@ -492,7 +816,8 @@ task_manager = PeriodicTaskManager(
     discord_handler=discord_handler,
     github_handler=github_handler,
     send_discord_notification=discord_handler.send_notification,
-    db_path=db_path,
+    db_info=db_info,
+    db_type=db_type,
 )
 logger.info("Periodic task manager initialized (not started yet)")
 
@@ -519,8 +844,10 @@ def has_user_triggered_event_before(
     db = get_db()
     try:
         cursor = db.execute(
-            "SELECT 1 FROM user_events WHERE github_user_id = ? "
-            "AND repository_id = ? AND event_type = ? LIMIT 1",
+            convert_query_for_db(
+                "SELECT 1 FROM user_events WHERE github_user_id = ? "
+                "AND repository_id = ? AND event_type = ? LIMIT 1"
+            ),  # type: ignore
             (github_user_id, repository_id, event_type),
         )
         result = cursor.fetchone() is not None
@@ -532,7 +859,7 @@ def has_user_triggered_event_before(
             repository_id,
         )
         return result
-    except sqlite3.Error as e:
+    except Exception as e:
         logger.error(f"Database error checking user event: {e}")
         return False
 
@@ -548,13 +875,20 @@ def add_user_event(github_user_id: int, repository_id: int, event_type: str):
     """
     try:
         db = get_db()
-        db.execute(
+        query = convert_query_for_db(
             "INSERT OR IGNORE INTO user_events "
-            "(github_user_id, repository_id, event_type) VALUES (?, ?, ?)",
-            (github_user_id, repository_id, event_type),
+            "(github_user_id, repository_id, event_type) VALUES (?, ?, ?)"
         )
+        # PostgreSQL doesn't support INSERT OR IGNORE, use ON CONFLICT instead
+        if db_type == "postgresql":
+            query = (
+                "INSERT INTO user_events "
+                "(github_user_id, repository_id, event_type) VALUES (%s, %s, %s) "
+                "ON CONFLICT (github_user_id, repository_id, event_type) DO NOTHING"
+            )
+        db.execute(query, (github_user_id, repository_id, event_type))  # type: ignore
         logger.info(f"Recorded {event_type} event: user {github_user_id} on repo {repository_id}")
-    except sqlite3.Error as e:
+    except Exception as e:
         logger.error(f"Database error adding user event: {e}")
 
 
@@ -570,7 +904,8 @@ def get_repository_by_id(repo_id: int) -> dict | None:
     """
     db = get_db()
     try:
-        cursor = db.execute("SELECT * FROM repositories WHERE repo_id = ? LIMIT 1", (repo_id,))
+        query = convert_query_for_db("SELECT * FROM repositories WHERE repo_id = ? LIMIT 1")
+        cursor = db.execute(query, (repo_id,))  # type: ignore
         row = cursor.fetchone()
         if row:
             logger.debug(f"Retrieved repository config for repo_id {repo_id}")
@@ -592,6 +927,7 @@ from routes import register_blueprints
 route_helpers = {
     "logger": logger,
     "get_db": get_db,
+    "db_type": db_type,
     "get_repository_by_id": get_repository_by_id,
     "decrypt_secret": security_handler.decrypt_secret,
     "verify_github_signature": security_handler.verify_github_signature,
@@ -616,6 +952,67 @@ route_helpers = {
 # Register all route blueprints (web, api, admin)
 register_blueprints(app, route_helpers)
 logger.info("Route blueprints registered successfully")
+
+
+# ============================================================================
+# Request Handlers
+# ============================================================================
+
+
+@app.before_request
+def validate_admin_session():
+    """
+    Validate admin sessions before processing any request.
+    This ensures sessions created before server startup are immediately invalidated,
+    even if they have a valid signature (Flask uses client-side signed cookies).
+    """
+    # Only check if there's an admin session
+    if session.get("admin_authenticated"):
+        admin_login_time = session.get("admin_login_time", 0)
+
+        # Invalidate sessions created before server startup
+        if admin_login_time < SERVER_START_TIME:
+            logger.warning(
+                (
+                    "Invalidating admin session created before server startup "
+                    "(login_time: %s, server_start: %s) from %s"
+                ),
+                admin_login_time,
+                SERVER_START_TIME,
+                request.remote_addr,
+            )
+            session.pop("admin_authenticated", None)
+            session.pop("admin_login_time", None)
+            session.modified = True
+
+
+# Security: Add security headers to all responses
+@app.after_request
+def add_security_headers(response):
+    """Add security headers to all HTTP responses."""
+    # Content Security Policy
+    response.headers["Content-Security-Policy"] = (
+        "default-src 'self'; "
+        "script-src 'self' 'unsafe-inline'; "
+        "style-src 'self' 'unsafe-inline'; "
+        "img-src 'self' data: https:; "
+        "font-src 'self' data:; "
+        "connect-src 'self'; "
+        "frame-ancestors 'none';"
+    )
+    # Prevent MIME type sniffing
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    # Enable XSS protection
+    response.headers["X-XSS-Protection"] = "1; mode=block"
+    # Prevent clickjacking
+    response.headers["X-Frame-Options"] = "DENY"
+    # HSTS (Strict Transport Security)
+    response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+    # Referrer Policy
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    # Permissions Policy
+    response.headers["Permissions-Policy"] = "geolocation=(), microphone=(), camera=()"
+    return response
 
 
 # ============================================================================
@@ -698,8 +1095,6 @@ def favicon():
     This centralizes favicon handling - browsers will automatically request this.
     Supports both /favicon.ico (default browser request) and /favicon.svg.
     """
-    from flask import send_from_directory
-
     return send_from_directory(
         os.path.join(app.root_path, "static"),
         "favicon.svg",
@@ -720,4 +1115,5 @@ if __name__ == "__main__":
     logger.info("Periodic tasks started (direct execution mode)")
 
     logger.info(f"Starting {config.APP_NAME} v{config.APP_VERSION} on port 5000")
-    app.run(host="0.0.0.0", port=5000, debug=False)
+    # Disable debug mode in production for security
+    app.run(host="0.0.0.0", port=5000, debug=os.environ.get("FLASK_DEBUG") == "1")

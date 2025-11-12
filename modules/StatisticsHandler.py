@@ -26,7 +26,9 @@ Usage:
 
 import logging
 import sqlite3
-from typing import Callable
+from typing import Callable, Literal
+
+from modules.DatabaseWrapper import DatabaseWrapper
 
 
 class StatisticsHandler:
@@ -37,6 +39,7 @@ class StatisticsHandler:
     def __init__(
         self,
         get_db_func: Callable,
+        db_type: Literal["sqlite", "postgresql"] = "sqlite",
         logger=None,
     ):
         """
@@ -44,9 +47,11 @@ class StatisticsHandler:
 
         Args:
             get_db_func: Function that returns a database connection
+            db_type: Database type ("sqlite" or "postgresql")
             logger: Optional logger instance for debug/error messages
         """
         self.get_db = get_db_func
+        self.db_wrapper = DatabaseWrapper(db_type)
         # Initialize logger
         if logger is None:
             self.logger = logging.getLogger("modules.statisticshandler")
@@ -67,16 +72,8 @@ class StatisticsHandler:
         """
         try:
             db = self.get_db()
-            db.execute(
-                """
-                INSERT INTO statistics (stat_name, stat_value, last_updated)
-                VALUES (?, ?, CURRENT_TIMESTAMP)
-                ON CONFLICT(stat_name) DO UPDATE SET
-                    stat_value = stat_value + ?,
-                    last_updated = CURRENT_TIMESTAMP
-                """,
-                (stat_name, amount, amount),
-            )
+            query = self.db_wrapper.build_increment_statistic()
+            db.execute(query, (stat_name, amount))
             if self.logger:
                 self.logger.debug(f"Incremented statistic '{stat_name}' by {amount}")
         except sqlite3.Error as e:
@@ -144,8 +141,14 @@ class StatisticsHandler:
         """
         try:
             db = self.get_db()
+            # Security: Whitelist allowed event types to prevent SQL injection
+            if event_type not in ["valid", "invalid"]:
+                if self.logger:
+                    self.logger.error(f"Invalid event_type parameter: {event_type}")
+                return []
+
             column = "valid_events" if event_type == "valid" else "invalid_events"
-            # Use parameterized query safely
+            # Use f-string with whitelisted column name
             query = f"""
                 SELECT github_user_id, github_username, {column} as count
                 FROM user_statistics

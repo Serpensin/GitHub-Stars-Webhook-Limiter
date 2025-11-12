@@ -3,10 +3,11 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="csrf-token" content="{{ csrf_token }}">
     <title>Admin Panel - GitHub Events Limiter</title>
     <link rel="icon" type="image/svg+xml" href="/favicon.ico">
     <link rel="stylesheet" href="/static/style.css?v=2.3.0">
-    <link rel="stylesheet" href="/static/admin.css?v=2.3.0">
+    <link rel="stylesheet" href="/static/admin.css?v=2.3.6">
 </head>
 <body>
     <div class="container">
@@ -192,12 +193,10 @@
     </div>
 
     <script>
-        // Internal server secret for admin panel authentication
-        // This secret is used to protect internal-only routes (login/logout)
-        // DO NOT expose this in public API documentation
-        window.INTERNAL_SECRET = "{{ internal_secret }}";
+        // Pass authentication status from server to JavaScript
+        window.SERVER_AUTH_STATUS = {{ is_authenticated | tojson }};
     </script>
-    <script src="/static/admin.js?v=2.3.0"></script>
+    <script src="/static/admin.js?v=2.3.6"></script>
 </body>
 </html>
 

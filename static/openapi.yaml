@@ -160,9 +160,7 @@ components:
             to permission lists
 
             - Bit 9 (512): View Statistics - Allows viewing system statistics and
-            analytics
-
-            - Bit 10 (1024): Testing Access - Grants full access to all testing endpoints'
+            analytics'
         rate_limit:
           type: integer
           description: Maximum requests per hour (0 = unlimited)
@@ -193,7 +191,7 @@ components:
           description: Permission bitmap (see APIKey schema for details)
           example: 31
           minimum: 0
-          maximum: 2047
+          maximum: 1023
         rate_limit:
           type: integer
           description: Maximum requests per hour (0 = unlimited)
@@ -717,11 +715,11 @@ paths:
                   max_value:
                     type: integer
                     description: Maximum possible bitmap value (all permissions enabled)
-                    example: 2047
+                    example: 1023
                   total_permissions:
                     type: integer
                     description: Total number of permissions
-                    example: 11
+                    example: 10
                   description:
                     type: string
                     description: Explanation of the permission system
@@ -770,12 +768,8 @@ paths:
                   bit: 9
                   value: 512
                   description: Allows viewing system statistics and analytics
-                - name: Test
-                  bit: 10
-                  value: 1024
-                  description: Grants full access to all testing endpoints
-                max_value: 2047
-                total_permissions: 11
+                max_value: 1023
+                total_permissions: 10
                 description: Permission bitmap system. Combine values with bitwise
                   OR to grant multiple permissions.
   /api/permissions/calculate:
@@ -1345,7 +1339,7 @@ paths:
                 permissions:
                   type: integer
                   minimum: 0
-                  maximum: 2047
+                  maximum: 1023
                 rate_limit:
                   type: integer
                   minimum: 0

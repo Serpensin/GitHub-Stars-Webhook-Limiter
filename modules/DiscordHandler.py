@@ -63,6 +63,17 @@ class DiscordHandler:
             bool: True if the webhook is valid and active, False otherwise.
         """
         try:
+            # Security: Validate Discord webhook URL format to prevent SSRF
+            # Only allow official Discord webhook URLs
+            if not webhook_url.startswith(
+                "https://discord.com/api/webhooks/"
+            ) and not webhook_url.startswith("https://discordapp.com/api/webhooks/"):
+                if self.logger:
+                    self.logger.warning(
+                        f"Invalid Discord webhook URL format: {webhook_url[:50]}..."
+                    )
+                return False
+
             if self.logger:
                 self.logger.debug(f"Verifying Discord webhook: {webhook_url[:50]}...")
             response = requests.get(webhook_url, timeout=5)

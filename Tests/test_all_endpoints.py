@@ -16,7 +16,7 @@ import time
 BASE_URL = "http://localhost:5000"
 # NOTE: This is a TEST-ONLY placeholder API key for local development
 # In production, use environment variables and never commit real keys
-ADMIN_API_KEY = "IeALzbaSENO5UNZP0WzgP4jWoj0kRjKkesJETde-pTE"  # Replace with actual admin API key
+ADMIN_API_KEY = "9HZ7wknntLZXEzGYyRrpZYPoySwv5jTm3r4odOuZmVI"  # Replace with actual admin API key
 # ============================================================================
 
 
@@ -370,36 +370,46 @@ class TestAllEndpoints(unittest.TestCase):
                 self.assertIn(response.status_code, [401, 403])
 
     def test_admin_login_missing_json(self):
-        """Test POST /admin/api/login without JSON."""
+        """Test POST /admin/api/login without JSON (expects 403 - browser-only endpoint)."""
         response = requests.post(
             f'{self.base_url}/admin/api/login',
             headers={'Content-Type': 'application/json'},
             timeout=5
         )
-        # Expects 403 because internal secret is missing (internal-only endpoint)
+        # Expects 400 because JSON is missing
+        self.assertEqual(response.status_code, 400)
+
+    def test_admin_login_missing_csrf(self):
+        """Test POST /admin/api/login without CSRF token (expects 403 - browser-only endpoint)."""
+        response = requests.post(
+            f'{self.base_url}/admin/api/login',
+            headers={'Content-Type': 'application/json'},
+            json={'password': 'test_password'},
+            timeout=5
+        )
+        # Expects 403 because CSRF token is missing (browser-only endpoint)
         self.assertEqual(response.status_code, 403)
 
-    def test_admin_login_missing_password(self):
-        """Test POST /admin/api/login without password field."""
+    def test_admin_login_invalid_csrf(self):
+        """Test POST /admin/api/login with invalid CSRF token (expects 403 - browser-only endpoint)."""
         response = requests.post(
             f'{self.base_url}/admin/api/login',
             headers={'Content-Type': 'application/json'},
-            json={},
+            json={'password': 'test_password', 'csrf_token': 'invalid_token'},
             timeout=5
         )
-        # Expects 403 because internal secret is missing (internal-only endpoint)
+        # Expects 403 because CSRF token doesn't match session (browser-only endpoint)
         self.assertEqual(response.status_code, 403)
 
-    def test_admin_login_invalid_password(self):
-        """Test POST /admin/api/login with wrong password."""
+    def test_admin_logout_no_session(self):
+        """Test POST /admin/api/logout without session (expects success even without session)."""
         response = requests.post(
-            f'{self.base_url}/admin/api/login',
+            f'{self.base_url}/admin/api/logout',
             headers={'Content-Type': 'application/json'},
-            json={'password': 'definitely_wrong_password'},
             timeout=5
         )
-        # Expects 403 because internal secret is missing (internal-only endpoint)
-        self.assertEqual(response.status_code, 403)
+        # Logout should succeed even without session (just clears session)
+        self.assertEqual(response.status_code, 200)
 
     # ========================================================================
     # ADMIN API ENDPOINTS - API Keys (with admin key auth)

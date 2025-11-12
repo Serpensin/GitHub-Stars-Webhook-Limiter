@@ -20,19 +20,25 @@ try:
     from argon2 import PasswordHasher
 except ImportError:
     print("[!] argon2-cffi not found, installing...")
-    os.system(f"{sys.executable} -m pip install argon2-cffi")
+    import subprocess
+
+    subprocess.check_call([sys.executable, "-m", "pip", "install", "argon2-cffi"])
     from argon2 import PasswordHasher
 try:
     from cryptography.fernet import Fernet
 except ImportError:
     print("[!] cryptography not found, installing...")
-    os.system(f"{sys.executable} -m pip install cryptography")
+    import subprocess
+
+    subprocess.check_call([sys.executable, "-m", "pip", "install", "cryptography"])
     from cryptography.fernet import Fernet
 try:
     from dotenv import load_dotenv
 except ImportError:
     print("[!] python-dotenv not found, installing...")
-    os.system(f"{sys.executable} -m pip install python-dotenv")
+    import subprocess
+
+    subprocess.check_call([sys.executable, "-m", "pip", "install", "python-dotenv"])
     from dotenv import load_dotenv
 
 # Load .env file (won't override existing environment variables)
