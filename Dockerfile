@@ -7,11 +7,11 @@ WORKDIR /app
 RUN apk add --no-cache build-base cargo gcc libc-dev libffi-dev linux-headers musl-dev openssl-dev rust
 
 # Copy and install Python dependencies
-COPY requirements.txt .
+COPY requirements-sqlite.txt .
 RUN python -m pip install --upgrade pip && \
     pip install --upgrade setuptools wheel && \
     pip install --prefix=/install --no-warn-script-location \
-        -r requirements.txt \
+        -r requirements-sqlite.txt \
         gunicorn gevent greenlet
 
 # Final stage

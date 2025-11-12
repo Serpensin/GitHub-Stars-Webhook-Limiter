@@ -17,11 +17,11 @@ RUN apk add --no-cache \
     rust
 
 # Copy and install Python dependencies
-COPY requirements.txt .
+COPY requirements-postgresql.txt .
 RUN python -m pip install --upgrade pip && \
     pip install --upgrade setuptools wheel && \
     pip install --prefix=/install --no-warn-script-location \
-        -r requirements.txt \
+        -r requirements-postgresql.txt \
         gunicorn gevent greenlet
 
 # Final stage
