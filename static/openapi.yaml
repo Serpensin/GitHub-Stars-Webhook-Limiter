@@ -2,67 +2,83 @@ openapi: 3.0.3
 info:
   title: GitHub Stars Webhook Limiter API
   version: 2.0.0
-  description: |
-    A Flask application that listens for GitHub webhook events (star/watch), validates them,
-    and sends notifications to Discord webhooks if a user performs an action for the first time.
-    
+  description: 'A Flask application that listens for GitHub webhook events (star/watch),
+    validates them,
+
+    and sends notifications to Discord webhooks if a user performs an action for the
+    first time.
+
+
     ## Features
+
     - Validates GitHub webhook secrets using HMAC
+
     - Prevents duplicate notifications for the same user/repo pair
+
     - Sends Discord notifications for new stars/watches
+
     - RESTful API for repository management
+
     - Admin panel for API key management
+
     - Rate limiting per API key
-    
+
+
     ## API Testing
-    - **Interactive Testing**: Visit [/try](/try) to test API endpoints with your API key using Swagger UI
+
+    - **Interactive Testing**: Visit [/try](/try) to test API endpoints with your
+    API key using Swagger UI
+
     - **Documentation**: Visit [/docs](/docs) for comprehensive API documentation
+
     - **OpenAPI Spec**: Access the raw specification at [/spec](/spec)
-    
+
+
     ## Links
+
     - **Repository**: [GitHub](https://github.com/Serpensin/GitHub-Stars-Webhook-Limiter)
+
     - **Discord**: [Join our server](https://url.serpensin.com/discord)
+
+    '
   contact:
     name: Serpensin
     url: https://serpensin.com
   license:
     name: AGPL-3.0
     url: https://www.gnu.org/licenses/agpl-3.0.html
-
 servers:
-  - url: /
-    description: Current server
-
+- url: /
+  description: Current server
 tags:
-  - name: Public API
-    description: Public endpoints requiring API key or admin session authentication
-  - name: Admin API
-    description: Admin endpoints requiring session authentication
-  - name: Webhooks
-    description: GitHub webhook receiver
-
+- name: Public API
+  description: Public endpoints requiring API key or admin session authentication
+- name: Admin API
+  description: Admin endpoints requiring session authentication
+- name: Webhooks
+  description: GitHub webhook receiver
 components:
   securitySchemes:
     bearerAuth:
       type: http
       scheme: bearer
-      description: |
-        API key for accessing public endpoints and admin endpoints. 
-        
-        **For Public API endpoints**: Get your API key from the Admin Panel.
-        
-        **For Admin API endpoints**: Use an admin API key (created with `is_admin_key: true`).
-        
-        **Testing**: Click the "Authorize" button above to enter your API key and test endpoints interactively.
+      description: "API key for accessing public endpoints and admin endpoints. \n\
+        \n**For Public API endpoints**: Get your API key from the Admin Panel.\n\n\
+        **For Admin API endpoints**: Use an admin API key (created with `is_admin_key:\
+        \ true`).\n\n**Testing**: Click the \"Authorize\" button above to enter your\
+        \ API key and test endpoints interactively.\n"
     sessionAuth:
       type: apiKey
       in: cookie
       name: session
-      description: |
-        Admin session cookie (obtain by logging in via /admin/api/login).
-        
-        Note: When using Swagger UI, admin endpoints can also be accessed using an admin API key in the bearerAuth scheme.
+      description: 'Admin session cookie (automatically set when accessing the admin
+        panel at /admin).
 
+
+        Note: When using Swagger UI, admin endpoints can be accessed using an admin
+        API key in the bearerAuth scheme.
+
+        '
   schemas:
     Error:
       type: object
@@ -71,36 +87,34 @@ components:
           type: string
           description: Error message
       required:
-        - error
-
+      - error
     Repository:
       type: object
       properties:
         repository_name:
           type: string
           description: GitHub repository in format "owner/repo"
-          example: "octocat/Hello-World"
+          example: octocat/Hello-World
         discord_webhook:
           type: string
           format: uri
           description: Discord webhook URL for notifications
-          example: "https://discord.com/api/webhooks/123456789/abcdefg"
+          example: https://discord.com/api/webhooks/123456789/abcdefg
         webhook_secret:
           type: string
           description: GitHub webhook secret for signature verification
-          example: "my_webhook_secret_123"
+          example: my_webhook_secret_123
       required:
-        - repository_name
-        - discord_webhook
-        - webhook_secret
-
+      - repository_name
+      - discord_webhook
+      - webhook_secret
     RepositoryUpdate:
       type: object
       properties:
         repository_name:
           type: string
           description: GitHub repository in format "owner/repo"
-          example: "octocat/Hello-World"
+          example: octocat/Hello-World
         discord_webhook:
           type: string
           format: uri
@@ -109,8 +123,7 @@ components:
           type: string
           description: New GitHub webhook secret (optional)
       required:
-        - repository_name
-
+      - repository_name
     APIKey:
       type: object
       properties:
@@ -122,15 +135,32 @@ components:
           description: Human-readable name for the API key
         permissions:
           type: integer
-          description: |
-            Permission bitmap:
-            - Bit 0 (1): Generate Secret
-            - Bit 1 (2): Add Repository
-            - Bit 2 (4): Verify Repository
-            - Bit 3 (8): Update Repository
-            - Bit 4 (16): Delete Repository
-            
-            Example: 31 = all permissions (1+2+4+8+16)
+          description: 'Permission bitmap:
+
+            - Bit 0 (1): Generate Secret - Allows generating webhook secrets for repositories
+
+            - Bit 1 (2): Add Repository - Allows adding new repositories to the limiter
+
+            - Bit 2 (4): Verify Repository - Allows verifying repository webhook configurations
+
+            - Bit 3 (8): Update Repository - Allows updating repository settings and
+            configurations
+
+            - Bit 4 (16): Delete Repository - Allows deleting repositories from the
+            limiter
+
+            - Bit 5 (32): List Events - Allows listing available event types
+
+            - Bit 6 (64): List Permissions - Allows listing available permissions
+
+            - Bit 7 (128): Calculate Permissions - Allows calculating permission bitmaps
+            from permission lists
+
+            - Bit 8 (256): Decode Permissions - Allows decoding permission bitmaps
+            to permission lists
+
+            - Bit 9 (512): View Statistics - Allows viewing system statistics and
+            analytics'
         rate_limit:
           type: integer
           description: Maximum requests per hour (0 = unlimited)
@@ -149,20 +179,19 @@ components:
           format: date-time
           nullable: true
           description: When the key was last used (null if never used)
-
     CreateAPIKey:
       type: object
       properties:
         name:
           type: string
           description: Human-readable name for the API key
-          example: "Production API Key"
+          example: Production API Key
         permissions:
           type: integer
           description: Permission bitmap (see APIKey schema for details)
           example: 31
           minimum: 0
-          maximum: 31
+          maximum: 1023
         rate_limit:
           type: integer
           description: Maximum requests per hour (0 = unlimited)
@@ -173,24 +202,21 @@ components:
           description: Create as admin key with full permissions
           default: false
       required:
-        - name
-        - permissions
-        - rate_limit
-
+      - name
+      - permissions
+      - rate_limit
 paths:
-  # Public API Endpoints
   /api/generate-secret:
     get:
       tags:
-        - Public API
+      - Public API
       summary: Generate webhook secret
-      description: |
-        Generate a cryptographically secure random secret for GitHub webhook signature verification.
-        
-        **Note:** CSRF tokens are automatically handled by the browser when using the web interface. 
-        API clients only need to provide the Bearer token in the Authorization header.
+      description: "Generate a cryptographically secure random secret for GitHub webhook\
+        \ signature verification.\n\n**Note:** CSRF tokens are automatically handled\
+        \ by the browser when using the web interface. \nAPI clients only need to\
+        \ provide the Bearer token in the Authorization header.\n"
       security:
-        - bearerAuth: []
+      - bearerAuth: []
       responses:
         '200':
           description: Secret generated successfully
@@ -202,7 +228,7 @@ paths:
                   secret:
                     type: string
                     description: Generated webhook secret
-                    example: "a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6"
+                    example: a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6
         '401':
           description: Unauthorized - Invalid or missing API key
           content:
@@ -210,15 +236,16 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
               example:
-                error: "Unauthorized: Invalid or missing API key"
+                error: 'Unauthorized: Invalid or missing API key'
         '403':
-          description: Forbidden - API key lacks the 'generate-secret' permission (bit 0)
+          description: Forbidden - API key lacks the 'generate-secret' permission
+            (bit 0)
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
               example:
-                error: "Forbidden: API key does not have permission for this endpoint"
+                error: 'Forbidden: API key does not have permission for this endpoint'
         '429':
           description: Rate limit exceeded - Too many requests from this API key
           content:
@@ -226,7 +253,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
               example:
-                error: "Rate limit exceeded. Try again later."
+                error: Rate limit exceeded. Try again later.
         '500':
           description: Internal server error
           content:
@@ -234,17 +261,16 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
               example:
-                error: "Database error occurred"
-
+                error: Database error occurred
   /api/repositories:
     post:
       tags:
-        - Public API
+      - Public API
       summary: Add repository
       description: Add a new GitHub repository to track webhook events
       security:
-        - bearerAuth: []
-        - sessionAuth: []
+      - bearerAuth: []
+      - sessionAuth: []
       requestBody:
         required: true
         content:
@@ -256,25 +282,25 @@ paths:
                   type: string
                   format: uri
                   description: GitHub repository URL
-                  example: "https://github.com/octocat/Hello-World"
+                  example: https://github.com/octocat/Hello-World
                 secret:
                   type: string
                   description: Webhook secret for signature verification
-                  example: "my_webhook_secret_123"
+                  example: my_webhook_secret_123
                 discord_webhook_url:
                   type: string
                   format: uri
                   description: Discord webhook URL for notifications
-                  example: "https://discord.com/api/webhooks/123456789/abcdefg"
+                  example: https://discord.com/api/webhooks/123456789/abcdefg
                 enabled_events:
                   type: string
                   description: Comma-separated list of events to track
-                  example: "star,watch"
+                  example: star,watch
               required:
-                - repo_url
-                - secret
-                - discord_webhook_url
-                - enabled_events
+              - repo_url
+              - secret
+              - discord_webhook_url
+              - enabled_events
       responses:
         '201':
           description: Repository added successfully
@@ -285,10 +311,10 @@ paths:
                 properties:
                   message:
                     type: string
-                    example: "Repository added successfully"
+                    example: Repository added successfully
                   repo_full_name:
                     type: string
-                    example: "octocat/Hello-World"
+                    example: octocat/Hello-World
         '400':
           description: Bad request - Invalid input
           content:
@@ -313,25 +339,33 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
-
     patch:
       tags:
-        - Public API
+      - Public API
       summary: Update repository
-      description: |
-        Update webhook secret, Discord webhook URL, or enabled events for an existing repository.
-        
+      description: 'Update webhook secret, Discord webhook URL, or enabled events
+        for an existing repository.
+
+
         **Authentication:** Requires the current Discord webhook URL for verification.
-        
+
+
         **All update fields are optional** - only provide the fields you want to change:
+
         - `new_secret`: Provide only if you want to change the webhook secret
-        - `new_discord_webhook_url`: Provide only if you want to change the Discord webhook URL
+
+        - `new_discord_webhook_url`: Provide only if you want to change the Discord
+        webhook URL
+
         - `enabled_events`: Provide only if you want to change the enabled events
-        
+
+
         Fields not provided will retain their current values.
+
+        '
       security:
-        - bearerAuth: []
-        - sessionAuth: []
+      - bearerAuth: []
+      - sessionAuth: []
       requestBody:
         required: true
         content:
@@ -342,28 +376,31 @@ paths:
                 repository_name:
                   type: string
                   description: GitHub repository in format "owner/repo"
-                  example: "octocat/Hello-World"
+                  example: octocat/Hello-World
                 discord_webhook_url:
                   type: string
                   format: uri
                   description: Current Discord webhook URL (required for authentication)
-                  example: "https://discord.com/api/webhooks/123456789/abcdefg"
+                  example: https://discord.com/api/webhooks/123456789/abcdefg
                 new_secret:
                   type: string
-                  description: New webhook secret (optional - only if changing the secret)
-                  example: "new_secret_456"
+                  description: New webhook secret (optional - only if changing the
+                    secret)
+                  example: new_secret_456
                 new_discord_webhook_url:
                   type: string
                   format: uri
-                  description: New Discord webhook URL (optional - only if changing the webhook URL)
-                  example: "https://discord.com/api/webhooks/987654321/hijklmn"
+                  description: New Discord webhook URL (optional - only if changing
+                    the webhook URL)
+                  example: https://discord.com/api/webhooks/987654321/hijklmn
                 enabled_events:
                   type: string
-                  description: Comma-separated list of events to track (optional - only if changing events)
-                  example: "star,watch"
+                  description: Comma-separated list of events to track (optional -
+                    only if changing events)
+                  example: star,watch
               required:
-                - repository_name
-                - discord_webhook_url
+              - repository_name
+              - discord_webhook_url
       responses:
         '200':
           description: Repository updated successfully
@@ -374,7 +411,7 @@ paths:
                 properties:
                   message:
                     type: string
-                    example: "Repository updated successfully"
+                    example: Repository updated successfully
         '400':
           description: Bad request
           content:
@@ -393,15 +430,15 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
-
     delete:
       tags:
-        - Public API
+      - Public API
       summary: Delete repository
-      description: Remove a repository from tracking. Requires Discord webhook URL for verification.
+      description: Remove a repository from tracking. Requires Discord webhook URL
+        for verification.
       security:
-        - bearerAuth: []
-        - sessionAuth: []
+      - bearerAuth: []
+      - sessionAuth: []
       requestBody:
         required: true
         content:
@@ -412,15 +449,15 @@ paths:
                 repository_name:
                   type: string
                   description: GitHub repository in format "owner/repo"
-                  example: "octocat/Hello-World"
+                  example: octocat/Hello-World
                 discord_webhook_url:
                   type: string
                   format: uri
                   description: Discord webhook URL for verification
-                  example: "https://discord.com/api/webhooks/123456789/abcdefg"
+                  example: https://discord.com/api/webhooks/123456789/abcdefg
               required:
-                - repository_name
-                - discord_webhook_url
+              - repository_name
+              - discord_webhook_url
       responses:
         '200':
           description: Repository deleted successfully
@@ -431,7 +468,7 @@ paths:
                 properties:
                   message:
                     type: string
-                    example: "Repository deleted successfully"
+                    example: Repository deleted successfully
         '401':
           description: Unauthorized
           content:
@@ -444,20 +481,24 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
-
   /api/repositories/verify:
     post:
       tags:
-        - Public API
+      - Public API
       summary: Verify and load repository
-      description: |
-        Check if a repository exists in the database and load its configuration.
-        
-        **Updated**: No longer requires the webhook secret - only repository URL and Discord webhook URL are needed for verification.
-        
-        This endpoint is used to load repository configuration for editing without exposing the secret.
+      description: 'Check if a repository exists in the database and load its configuration.
+
+
+        **Updated**: No longer requires the webhook secret - only repository URL and
+        Discord webhook URL are needed for verification.
+
+
+        This endpoint is used to load repository configuration for editing without
+        exposing the secret.
+
+        '
       security:
-        - bearerAuth: []
+      - bearerAuth: []
       requestBody:
         required: true
         content:
@@ -469,15 +510,15 @@ paths:
                   type: string
                   format: uri
                   description: GitHub repository URL
-                  example: "https://github.com/octocat/Hello-World"
+                  example: https://github.com/octocat/Hello-World
                 discord_webhook_url:
                   type: string
                   format: uri
                   description: Discord webhook URL to verify ownership
-                  example: "https://discord.com/api/webhooks/123456789/abcdefg"
+                  example: https://discord.com/api/webhooks/123456789/abcdefg
               required:
-                - repo_url
-                - discord_webhook_url
+              - repo_url
+              - discord_webhook_url
       responses:
         '200':
           description: Repository verified and loaded successfully
@@ -488,7 +529,7 @@ paths:
                 properties:
                   message:
                     type: string
-                    example: "Repository verified"
+                    example: Repository verified
                   repo_id:
                     type: integer
                     description: Internal repository ID
@@ -496,11 +537,11 @@ paths:
                   repo_full_name:
                     type: string
                     description: Full repository name (owner/repo)
-                    example: "octocat/Hello-World"
+                    example: octocat/Hello-World
                   enabled_events:
                     type: string
                     description: Comma-separated list of enabled events
-                    example: "star,watch"
+                    example: star,watch
         '400':
           description: Bad request - Invalid input or malformed URL
           content:
@@ -510,16 +551,16 @@ paths:
               examples:
                 missing_json:
                   value:
-                    error: "Missing JSON payload"
+                    error: Missing JSON payload
                 missing_fields:
                   value:
-                    error: "Missing required fields"
+                    error: Missing required fields
                 invalid_url:
                   value:
-                    error: "Invalid GitHub repository URL"
+                    error: Invalid GitHub repository URL
                 github_fetch_failed:
                   value:
-                    error: "Could not fetch repository data from GitHub"
+                    error: Could not fetch repository data from GitHub
         '401':
           description: Unauthorized - Invalid or missing API key
           content:
@@ -533,7 +574,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
               example:
-                error: "Invalid Discord webhook URL"
+                error: Invalid Discord webhook URL
         '404':
           description: Repository not found in database
           content:
@@ -541,7 +582,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
               example:
-                error: "Repository not found in database"
+                error: Repository not found in database
         '429':
           description: Rate limit exceeded
           content:
@@ -554,20 +595,24 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
-
   /api/events:
     get:
       tags:
-        - Public API
+      - Public API
       summary: List all available event types
-      description: |
-        Returns a list of all event types that can be enabled for repository tracking.
-        These event names are used when adding or updating repositories in the `enabled_events` field.
-        
+      description: 'Returns a list of all event types that can be enabled for repository
+        tracking.
+
+        These event names are used when adding or updating repositories in the `enabled_events`
+        field.
+
+
         **Requires Authentication:** API key or admin session.
+
+        '
       security:
-        - bearerAuth: []
-        - sessionAuth: []
+      - bearerAuth: []
+      - sessionAuth: []
       responses:
         '200':
           description: List of all available event types
@@ -584,15 +629,15 @@ paths:
                         name:
                           type: string
                           description: Event type name
-                          example: "star"
+                          example: star
                         description:
                           type: string
                           description: Description of when this event is triggered
-                          example: "Triggered when a user stars the repository"
+                          example: Triggered when a user stars the repository
                         github_event:
                           type: string
                           description: Corresponding GitHub webhook event name
-                          example: "star"
+                          example: star
                   total_events:
                     type: integer
                     description: Total number of available event types
@@ -600,17 +645,19 @@ paths:
                   description:
                     type: string
                     description: Usage instructions
-                    example: "Use comma-separated event names when adding or updating repositories. Example: 'star,watch'"
+                    example: 'Use comma-separated event names when adding or updating
+                      repositories. Example: ''star,watch'''
               example:
                 events:
-                  - name: "star"
-                    description: "Triggered when a user stars the repository"
-                    github_event: "star"
-                  - name: "watch"
-                    description: "Triggered when a user watches the repository"
-                    github_event: "watch"
+                - name: star
+                  description: Triggered when a user stars the repository
+                  github_event: star
+                - name: watch
+                  description: Triggered when a user watches the repository
+                  github_event: watch
                 total_events: 2
-                description: "Use comma-separated event names when adding or updating repositories. Example: 'star,watch'"
+                description: 'Use comma-separated event names when adding or updating
+                  repositories. Example: ''star,watch'''
         '401':
           description: Unauthorized
           content:
@@ -623,21 +670,19 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
-
   /api/permissions:
     get:
       tags:
-        - Public API
+      - Public API
       summary: List all available permissions
-      description: |
-        Returns a list of all available permissions in the system, including their bit positions, 
-        numeric values, and descriptions. This is useful for understanding the permission bitmap system
-        and for calculating permission values programmatically.
-        
-        **Requires Authentication:** API key with `permissions-list` permission or admin session.
+      description: "Returns a list of all available permissions in the system, including\
+        \ their bit positions, \nnumeric values, and descriptions. This is useful\
+        \ for understanding the permission bitmap system\nand for calculating permission\
+        \ values programmatically.\n\n**Requires Authentication:** API key with `permissions-list`\
+        \ permission or admin session.\n"
       security:
-        - bearerAuth: []
-        - sessionAuth: []
+      - bearerAuth: []
+      - sessionAuth: []
       responses:
         '200':
           description: List of all permissions
@@ -654,7 +699,7 @@ paths:
                         name:
                           type: string
                           description: Permission name
-                          example: "repositories-add"
+                          example: repositories-add
                         bit:
                           type: integer
                           description: Bit position (0-indexed)
@@ -666,75 +711,87 @@ paths:
                         description:
                           type: string
                           description: Human-readable description
-                          example: "Allows adding new repositories"
+                          example: Allows adding new repositories
                   max_value:
                     type: integer
                     description: Maximum possible bitmap value (all permissions enabled)
-                    example: 31
+                    example: 1023
                   total_permissions:
                     type: integer
                     description: Total number of permissions
-                    example: 8
+                    example: 10
                   description:
                     type: string
                     description: Explanation of the permission system
-                    example: "Permission bitmap system. Combine values with bitwise OR to grant multiple permissions."
+                    example: Permission bitmap system. Combine values with bitwise
+                      OR to grant multiple permissions.
               example:
-                permissions:
-                  - name: "generate-secret"
-                    bit: 0
-                    value: 1
-                    description: "Allows access to /generate-secret endpoint"
-                  - name: "repositories-add"
-                    bit: 1
-                    value: 2
-                    description: "Allows access to /repositories (POST) endpoint"
-                  - name: "repositories-verify"
-                    bit: 2
-                    value: 4
-                    description: "Allows access to /repositories/verify endpoint"
-                  - name: "repositories-update"
-                    bit: 3
-                    value: 8
-                    description: "Allows access to /repositories (PATCH) endpoint"
-                  - name: "repositories-delete"
-                    bit: 4
-                    value: 16
-                    description: "Allows access to /repositories (DELETE) endpoint"
-                  - name: "events-list"
-                    bit: 5
-                    value: 32
-                    description: "Allows access to /events endpoint"
-                  - name: "permissions-list"
-                    bit: 6
-                    value: 64
-                    description: "Allows access to /permissions endpoint"
-                  - name: "permissions-calculate"
-                    bit: 7
-                    value: 128
-                    description: "Allows access to /permissions/calculate endpoint"
-                  - name: "permissions-decode"
-                    bit: 8
-                    value: 256
-                    description: "Allows access to /permissions/decode endpoint"
-                max_value: 511
-                total_permissions: 9
-                description: "Permission bitmap system. Combine values with bitwise OR to grant multiple permissions."
-
+                permissions: &id001
+                - name: generate-secret
+                  bit: 0
+                  value: 1
+                  description: Allows generating webhook secrets for repositories
+                - name: repositories-add
+                  bit: 1
+                  value: 2
+                  description: Allows adding new repositories to the limiter
+                - name: repositories-verify
+                  bit: 2
+                  value: 4
+                  description: Allows verifying repository webhook configurations
+                - name: repositories-update
+                  bit: 3
+                  value: 8
+                  description: Allows updating repository settings and configurations
+                - name: repositories-delete
+                  bit: 4
+                  value: 16
+                  description: Allows deleting repositories from the limiter
+                - name: events-list
+                  bit: 5
+                  value: 32
+                  description: Allows listing available event types
+                - name: permissions-list
+                  bit: 6
+                  value: 64
+                  description: Allows listing available permissions
+                - name: permissions-calculate
+                  bit: 7
+                  value: 128
+                  description: Allows calculating permission bitmaps from permission
+                    lists
+                - name: permissions-decode
+                  bit: 8
+                  value: 256
+                  description: Allows decoding permission bitmaps to permission lists
+                - name: stats
+                  bit: 9
+                  value: 512
+                  description: Allows viewing system statistics and analytics
+                max_value: 1023
+                total_permissions: 10
+                description: Permission bitmap system. Combine values with bitwise
+                  OR to grant multiple permissions.
   /api/permissions/calculate:
     post:
       tags:
-        - Public API
+      - Public API
       summary: Calculate permission bitmap
-      description: |
-        Calculates the permission bitmap value from a list of permission names.
+      description: 'Calculates the permission bitmap value from a list of permission
+        names.
+
         This is a helper endpoint that takes permission names and returns the corresponding
+
         bitmap value along with a breakdown showing how the value was calculated.
-        
-        **Requires Authentication:** API key with `permissions-calculate` permission or admin session.
+
+
+        **Requires Authentication:** API key with `permissions-calculate` permission
+        or admin session.
+
+        '
       security:
-        - bearerAuth: []
-        - sessionAuth: []
+      - bearerAuth: []
+      - sessionAuth: []
       requestBody:
         required: true
         content:
@@ -747,9 +804,11 @@ paths:
                   items:
                     type: string
                   description: Array of permission names to calculate bitmap for
-                  example: ["repositories-add", "repositories-verify"]
+                  example:
+                  - repositories-add
+                  - repositories-verify
               required:
-                - permissions
+              - permissions
       responses:
         '200':
           description: Calculated permission bitmap
@@ -769,7 +828,7 @@ paths:
                       properties:
                         name:
                           type: string
-                          example: "repositories-add"
+                          example: repositories-add
                         bit:
                           type: integer
                           example: 1
@@ -780,17 +839,17 @@ paths:
                   calculation:
                     type: string
                     description: Human-readable calculation formula
-                    example: "2 + 4 = 6"
+                    example: 2 + 4 = 6
               example:
                 bitmap: 6
                 breakdown:
-                  - name: "repositories-add"
-                    bit: 1
-                    value: 2
-                  - name: "repositories-verify"
-                    bit: 2
-                    value: 4
-                calculation: "2 + 4 = 6"
+                - name: repositories-add
+                  bit: 1
+                  value: 2
+                - name: repositories-verify
+                  bit: 2
+                  value: 4
+                calculation: 2 + 4 = 6
         '400':
           description: Bad request - Invalid input or unknown permission name
           content:
@@ -800,31 +859,38 @@ paths:
               examples:
                 missing_json:
                   value:
-                    error: "Missing JSON payload"
+                    error: Missing JSON payload
                 missing_permissions:
                   value:
-                    error: "Missing 'permissions' array in request"
+                    error: Missing 'permissions' array in request
                 invalid_type:
                   value:
-                    error: "'permissions' must be an array"
+                    error: '''permissions'' must be an array'
                 unknown_permission:
                   value:
-                    error: "Unknown permission: invalid-permission"
-
+                    error: 'Unknown permission: invalid-permission'
   /api/permissions/decode:
     post:
       tags:
-        - Public API
+      - Public API
       summary: Decode permission bitmap
-      description: |
-        Decodes a permission bitmap value to show which permissions are enabled.
-        Accepts decimal integers, binary strings (0b prefix), or hexadecimal strings (0x prefix).
-        This is useful for understanding what permissions are granted by a specific bitmap value.
-        
-        **Requires Authentication:** API key with `permissions-decode` permission or admin session.
+      description: 'Decodes a permission bitmap value to show which permissions are
+        enabled.
+
+        Accepts decimal integers, binary strings (0b prefix), or hexadecimal strings
+        (0x prefix).
+
+        This is useful for understanding what permissions are granted by a specific
+        bitmap value.
+
+
+        **Requires Authentication:** API key with `permissions-decode` permission
+        or admin session.
+
+        '
       security:
-        - bearerAuth: []
-        - sessionAuth: []
+      - bearerAuth: []
+      - sessionAuth: []
       requestBody:
         required: true
         content:
@@ -834,14 +900,14 @@ paths:
               properties:
                 bitmap:
                   oneOf:
-                    - type: integer
-                      description: Decimal bitmap value
-                      example: 6
-                    - type: string
-                      description: Binary (0b...) or hexadecimal (0x...) string
-                      example: "0b110"
+                  - type: integer
+                    description: Decimal bitmap value
+                    example: 6
+                  - type: string
+                    description: Binary (0b...) or hexadecimal (0x...) string
+                    example: '0b110'
               required:
-                - bitmap
+              - bitmap
             examples:
               decimal:
                 summary: Decimal value
@@ -850,11 +916,11 @@ paths:
               binary:
                 summary: Binary string
                 value:
-                  bitmap: "0b110"
+                  bitmap: '0b110'
               hexadecimal:
                 summary: Hexadecimal string
                 value:
-                  bitmap: "0x6"
+                  bitmap: '0x6'
       responses:
         '200':
           description: Decoded permissions
@@ -870,17 +936,19 @@ paths:
                   binary:
                     type: string
                     description: Binary representation
-                    example: "0b110"
+                    example: '0b110'
                   hexadecimal:
                     type: string
                     description: Hexadecimal representation
-                    example: "0x6"
+                    example: '0x6'
                   permissions:
                     type: array
                     items:
                       type: string
                     description: List of enabled permission names
-                    example: ["repositories-add", "repositories-verify"]
+                    example:
+                    - repositories-add
+                    - repositories-verify
                   breakdown:
                     type: array
                     items:
@@ -888,7 +956,7 @@ paths:
                       properties:
                         name:
                           type: string
-                          example: "repositories-add"
+                          example: repositories-add
                         bit:
                           type: integer
                           example: 1
@@ -899,20 +967,20 @@ paths:
                   description:
                     type: string
                     description: Human-readable description
-                    example: "Bitmap 6 enables 2 permission(s)"
+                    example: Bitmap 6 enables 2 permission(s)
               example:
                 bitmap: 6
-                binary: "0b110"
-                hexadecimal: "0x6"
-                permissions: ["repositories-add", "repositories-verify"]
+                binary: '0b110'
+                hexadecimal: '0x6'
+                permissions: *id001
                 breakdown:
-                  - name: "repositories-add"
-                    bit: 1
-                    value: 2
-                  - name: "repositories-verify"
-                    bit: 2
-                    value: 4
-                description: "Bitmap 6 enables 2 permission(s)"
+                - name: repositories-add
+                  bit: 1
+                  value: 2
+                - name: repositories-verify
+                  bit: 2
+                  value: 4
+                description: Bitmap 6 enables 2 permission(s)
         '400':
           description: Bad request - Invalid bitmap format or value
           content:
@@ -922,120 +990,217 @@ paths:
               examples:
                 missing_json:
                   value:
-                    error: "Missing JSON payload"
+                    error: Missing JSON payload
                 missing_bitmap:
                   value:
-                    error: "bitmap value is required"
+                    error: bitmap value is required
                 invalid_format:
                   value:
-                    error: "Invalid bitmap format. Use decimal (3), binary (0b11), or hexadecimal (0x3)"
+                    error: Invalid bitmap format. Use decimal (3), binary (0b11),
+                      or hexadecimal (0x3)
                 negative_value:
                   value:
-                    error: "bitmap cannot be negative"
+                    error: bitmap cannot be negative
                 exceeds_max:
                   value:
-                    error: "bitmap value 999 exceeds maximum 31"
+                    error: bitmap value 999 exceeds maximum 31
                     max_value: 31
-
-  # Admin API Endpoints
-  /admin/api/login:
-    post:
+  /api/stats:
+    get:
       tags:
-        - Admin API
-      summary: Admin login
-      description: |
-        Authenticate as admin and create a session.
-        
-        The session cookie is automatically set in the browser via the `Set-Cookie` header.
-        For programmatic access (e.g., from scripts or other applications), extract the `session` cookie
-        from the response headers and include it in subsequent requests.
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              properties:
-                password:
-                  type: string
-                  format: password
-                  description: Admin password
-              required:
-                - password
-            example:
-              password: "your_admin_password"
-      responses:
-        '200':
-          description: Login successful
-          headers:
-            Set-Cookie:
-              description: Session cookie for authentication
-              schema:
-                type: string
-                example: "session=eyJhZG1pbl9hdXRoZW50aWNhdGVkIjp0cnVlfQ...; Path=/; HttpOnly; SameSite=Lax"
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  message:
-                    type: string
-                    example: "Login successful"
-                  session_cookie_name:
-                    type: string
-                    description: Name of the session cookie (always "session")
-                    example: "session"
-                  session_cookie_value:
-                    type: string
-                    description: The actual session cookie value for programmatic access
-                    example: "eyJhZG1pbl9hdXRoZW50aWNhdGVkIjp0cnVlLCJhZG1pbl9sb2dpbl90aW1lIjoxNjQwOTk1MjAwfQ.YdH3jA.abc123"
-        '400':
-          description: Bad request - Missing password
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-              example:
-                error: "Password required"
-        '401':
-          description: Invalid password
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-              example:
-                error: "Invalid password"
+      - Public API
+      summary: Get system statistics
+      description: 'Retrieve comprehensive statistics about the system including:
 
-  /admin/api/logout:
-    post:
-      tags:
-        - Admin API
-      summary: Admin logout
-      description: End the admin session
+        - Current counts of repositories and API keys
+
+        - Total events received (unique and duplicates)
+
+        - Deletion statistics by reason
+
+        - Top users by valid and invalid events
+
+        - Discord message statistics
+
+
+        **Requires Authentication:** API key with `stats` permission or admin session.
+
+
+        **Note:** A public version of this endpoint is available at `/stats` (without
+        `/api` prefix)
+
+        that doesn''t require authentication when accessed from a browser.
+
+        '
       security:
-        - sessionAuth: []
-        - bearerAuth: []
+      - bearerAuth: []
+      - sessionAuth: []
       responses:
         '200':
-          description: Logout successful
+          description: Statistics retrieved successfully
           content:
             application/json:
               schema:
                 type: object
                 properties:
-                  message:
-                    type: string
-                    example: "Logged out successfully"
-
+                  totals:
+                    type: object
+                    properties:
+                      repositories_current:
+                        type: integer
+                        description: Number of repositories currently registered
+                        example: 42
+                      api_keys_current:
+                        type: integer
+                        description: Number of API keys currently active
+                        example: 15
+                      repositories_ever_added:
+                        type: integer
+                        description: Total number of repositories ever added
+                        example: 67
+                      api_keys_ever_created:
+                        type: integer
+                        description: Total number of API keys ever created
+                        example: 23
+                      discord_messages_sent:
+                        type: integer
+                        description: Total Discord notifications sent
+                        example: 1234
+                      events_received:
+                        type: integer
+                        description: Total webhook events received
+                        example: 5678
+                      unique_events:
+                        type: integer
+                        description: Number of unique events (first-time user/repo
+                          combinations)
+                        example: 890
+                      duplicate_events:
+                        type: integer
+                        description: Number of duplicate events (already seen user/repo
+                          combinations)
+                        example: 4788
+                  deletions:
+                    type: object
+                    properties:
+                      repos_inactive_360_days:
+                        type: integer
+                        description: Repositories deleted due to 360 days of inactivity
+                        example: 12
+                      repos_github_deleted:
+                        type: integer
+                        description: Repositories deleted because they were removed
+                          from GitHub
+                        example: 5
+                      repos_webhook_invalid:
+                        type: integer
+                        description: Repositories deleted due to invalid webhook configuration
+                        example: 3
+                      api_keys_inactive_360_days:
+                        type: integer
+                        description: API keys deleted due to 360 days of inactivity
+                        example: 7
+                  top_users:
+                    type: object
+                    properties:
+                      valid_events:
+                        type: array
+                        description: Top 10 users by number of valid events
+                        items:
+                          type: object
+                          properties:
+                            user_id:
+                              type: integer
+                              description: GitHub user ID
+                              example: 12345
+                            username:
+                              type: string
+                              description: GitHub username
+                              example: octocat
+                            count:
+                              type: integer
+                              description: Number of valid events
+                              example: 42
+                      invalid_events:
+                        type: array
+                        description: Top 10 users by number of invalid events
+                        items:
+                          type: object
+                          properties:
+                            user_id:
+                              type: integer
+                              description: GitHub user ID
+                              example: 67890
+                            username:
+                              type: string
+                              description: GitHub username
+                              example: hacker
+                            count:
+                              type: integer
+                              description: Number of invalid events
+                              example: 15
+                  timestamp:
+                    type: integer
+                    description: Unix timestamp when the statistics were generated
+                    example: 1699000000
+              example:
+                totals:
+                  repositories_current: 42
+                  api_keys_current: 15
+                  repositories_ever_added: 67
+                  api_keys_ever_created: 23
+                  discord_messages_sent: 1234
+                  events_received: 5678
+                  unique_events: 890
+                  duplicate_events: 4788
+                deletions:
+                  repos_inactive_360_days: 12
+                  repos_github_deleted: 5
+                  repos_webhook_invalid: 3
+                  api_keys_inactive_360_days: 7
+                top_users:
+                  valid_events:
+                  - user_id: 12345
+                    username: octocat
+                    count: 42
+                  invalid_events:
+                  - user_id: 67890
+                    username: hacker
+                    count: 15
+                timestamp: 1699000000
+        '401':
+          description: Unauthorized - Missing or invalid API key/session
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error: Unauthorized
+        '403':
+          description: Forbidden - API key lacks 'stats' permission
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error: API key does not have the required 'stats' permission
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error: Failed to retrieve statistics
   /admin/api/keys:
     get:
       tags:
-        - Admin API
+      - Admin API
       summary: List API keys
       description: Get all API keys with their permissions and status
       security:
-        - sessionAuth: []
-        - bearerAuth: []
+      - sessionAuth: []
+      - bearerAuth: []
       responses:
         '200':
           description: List of API keys
@@ -1054,16 +1219,15 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
-
     post:
       tags:
-        - Admin API
+      - Admin API
       summary: Create API key
       description: Generate a new API key with specified permissions
       security:
-        - sessionAuth: []
-          csrfToken: []
-        - bearerAuth: []
+      - sessionAuth: []
+        csrfToken: []
+      - bearerAuth: []
       requestBody:
         required: true
         content:
@@ -1080,18 +1244,18 @@ paths:
                 properties:
                   message:
                     type: string
-                    example: "API key created successfully"
+                    example: API key created successfully
                   api_key:
                     type: string
                     description: The generated API key (only shown once)
-                    example: "sk_live_abc123def456..."
+                    example: sk_live_abc123def456...
                   id:
                     type: integer
                     description: The ID of the created API key
                     example: 42
                   name:
                     type: string
-                    example: "Production Key"
+                    example: Production Key
                   permissions:
                     type: integer
                     example: 31
@@ -1110,28 +1274,30 @@ paths:
               examples:
                 name_required:
                   value:
-                    error: "Name required"
+                    error: Name required
                 name_too_long:
                   value:
-                    error: "Name must be 16 characters or less"
+                    error: Name must be 16 characters or less
                 name_invalid_chars:
                   value:
-                    error: "Name can only contain letters, numbers, spaces, hyphens, and underscores"
+                    error: Name can only contain letters, numbers, spaces, hyphens,
+                      and underscores
                 no_permissions:
                   value:
-                    error: "At least one permission must be selected (permissions cannot be 0)"
+                    error: At least one permission must be selected (permissions cannot
+                      be 0)
                 invalid_permissions_bitmap:
                   value:
-                    error: "Invalid permissions bitmap (valid range: 1-31)"
+                    error: 'Invalid permissions bitmap (valid range: 1-31)'
                 permissions_not_integer:
                   value:
-                    error: "Permissions must be an integer bitmap"
+                    error: Permissions must be an integer bitmap
                 rate_limit_invalid:
                   value:
-                    error: "Rate limit must be between 0 (unlimited) and 1000"
+                    error: Rate limit must be between 0 (unlimited) and 1000
                 rate_limit_not_number:
                   value:
-                    error: "Rate limit must be a valid number"
+                    error: Rate limit must be a valid number
         '401':
           description: Unauthorized
           content:
@@ -1145,25 +1311,24 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
               example:
-                error: "Database error occurred"
-
+                error: Database error occurred
   /admin/api/keys/{id}:
     patch:
       tags:
-        - Admin API
+      - Admin API
       summary: Update API key
       description: Update permissions or rate limit for an existing API key
       security:
-        - sessionAuth: []
-          csrfToken: []
-        - bearerAuth: []
+      - sessionAuth: []
+        csrfToken: []
+      - bearerAuth: []
       parameters:
-        - name: id
-          in: path
-          required: true
-          schema:
-            type: integer
-          description: API key ID
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+        description: API key ID
       requestBody:
         required: true
         content:
@@ -1174,13 +1339,13 @@ paths:
                 permissions:
                   type: integer
                   minimum: 0
-                  maximum: 31
+                  maximum: 1023
                 rate_limit:
                   type: integer
                   minimum: 0
               required:
-                - permissions
-                - rate_limit
+              - permissions
+              - rate_limit
       responses:
         '200':
           description: API key updated successfully
@@ -1203,23 +1368,22 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
-
     delete:
       tags:
-        - Admin API
+      - Admin API
       summary: Delete API key
       description: Permanently delete an API key
       security:
-        - sessionAuth: []
-          csrfToken: []
-        - bearerAuth: []
+      - sessionAuth: []
+        csrfToken: []
+      - bearerAuth: []
       parameters:
-        - name: id
-          in: path
-          required: true
-          schema:
-            type: integer
-          description: API key ID
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+        description: API key ID
       responses:
         '200':
           description: API key deleted successfully
@@ -1242,24 +1406,23 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
-
   /admin/api/keys/{id}/toggle:
     post:
       tags:
-        - Admin API
+      - Admin API
       summary: Toggle API key status
       description: Activate or deactivate an API key
       security:
-        - sessionAuth: []
-          csrfToken: []
-        - bearerAuth: []
+      - sessionAuth: []
+        csrfToken: []
+      - bearerAuth: []
       parameters:
-        - name: id
-          in: path
-          required: true
-          schema:
-            type: integer
-          description: API key ID
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+        description: API key ID
       responses:
         '200':
           description: API key toggled successfully
@@ -1276,17 +1439,16 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
-
   /admin/api/keys/bulk:
     post:
       tags:
-        - Admin API
+      - Admin API
       summary: Bulk key operations
       description: Perform bulk operations on multiple API keys
       security:
-        - sessionAuth: []
-          csrfToken: []
-        - bearerAuth: []
+      - sessionAuth: []
+        csrfToken: []
+      - bearerAuth: []
       requestBody:
         required: true
         content:
@@ -1296,7 +1458,10 @@ paths:
               properties:
                 action:
                   type: string
-                  enum: [delete, activate, deactivate]
+                  enum:
+                  - delete
+                  - activate
+                  - deactivate
                   description: Action to perform
                 key_ids:
                   type: array
@@ -1304,8 +1469,8 @@ paths:
                     type: integer
                   description: List of API key IDs
               required:
-                - action
-                - key_ids
+              - action
+              - key_ids
       responses:
         '200':
           description: Bulk operation completed successfully
@@ -1328,37 +1493,40 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
-
   /admin/api/logs:
     get:
       tags:
-        - Admin API
+      - Admin API
       summary: Get application logs
-      description: |
-        Retrieve application logs for monitoring and debugging.
-        
+      description: 'Retrieve application logs for monitoring and debugging.
+
+
         **Note:** Logs are returned in reverse chronological order (newest first).
+
         This ensures that when fetching the default or maximum number of lines,
+
         you receive the most recent log entries.
+
+        '
       security:
-        - sessionAuth: []
-        - bearerAuth: []
+      - sessionAuth: []
+      - bearerAuth: []
       parameters:
-        - name: file
-          in: query
-          required: false
-          schema:
-            type: string
-          description: Specific log file name (optional, defaults to current log)
-        - name: lines
-          in: query
-          required: false
-          schema:
-            type: integer
-            minimum: 1
-            maximum: 10000
-            default: 1000
-          description: Number of log lines to retrieve (1-10000, default 1000)
+      - name: file
+        in: query
+        required: false
+        schema:
+          type: string
+        description: Specific log file name (optional, defaults to current log)
+      - name: lines
+        in: query
+        required: false
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 10000
+          default: 1000
+        description: Number of log lines to retrieve (1-10000, default 1000)
       responses:
         '200':
           description: Log data
@@ -1371,7 +1539,8 @@ paths:
                     type: array
                     items:
                       type: string
-                    description: Array of log lines in reverse chronological order (newest first)
+                    description: Array of log lines in reverse chronological order
+                      (newest first)
                   loggers:
                     type: array
                     items:
@@ -1388,23 +1557,23 @@ paths:
                   note:
                     type: string
                     description: Information about log ordering
-                    example: "Logs are returned in reverse chronological order (newest first)"
+                    example: Logs are returned in reverse chronological order (newest
+                      first)
         '401':
           description: Unauthorized
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
-
   /admin/api/logs/list:
     get:
       tags:
-        - Admin API
+      - Admin API
       summary: List available log files
       description: Get a list of all available log files
       security:
-        - sessionAuth: []
-        - bearerAuth: []
+      - sessionAuth: []
+      - bearerAuth: []
       responses:
         '200':
           description: List of log files
@@ -1429,23 +1598,22 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
-
   /admin/api/logs/download:
     get:
       tags:
-        - Admin API
+      - Admin API
       summary: Download log file
       description: Download a log file
       security:
-        - sessionAuth: []
-        - bearerAuth: []
+      - sessionAuth: []
+      - bearerAuth: []
       parameters:
-        - name: file
-          in: query
-          required: false
-          schema:
-            type: string
-          description: Specific log file name (optional, defaults to current log)
+      - name: file
+        in: query
+        required: false
+        schema:
+          type: string
+        description: Specific log file name (optional, defaults to current log)
       responses:
         '200':
           description: Log file
@@ -1459,41 +1627,34 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
-
-  # Webhook Endpoint
   /webhook:
     post:
       tags:
-        - Webhooks
+      - Webhooks
       summary: GitHub webhook receiver
-      description: |
-        Receives GitHub webhook events for star and watch actions.
-        
-        ### Setup Instructions:
-        1. Go to your GitHub repository Settings → Webhooks
-        2. Click "Add webhook"
-        3. Set Payload URL: `https://your-domain.com/webhook`
-        4. Content type: `application/json`
-        5. Secret: Use the secret from `/api/generate-secret`
-        6. Select events: **Stars** and **Watches**
-        7. Click "Add webhook"
-        
-        The application will verify the signature and send Discord notifications
-        for first-time interactions only.
+      description: "Receives GitHub webhook events for star and watch actions.\n\n\
+        ### Setup Instructions:\n1. Go to your GitHub repository Settings \u2192 Webhooks\n\
+        2. Click \"Add webhook\"\n3. Set Payload URL: `https://your-domain.com/webhook`\n\
+        4. Content type: `application/json`\n5. Secret: Use the secret from `/api/generate-secret`\n\
+        6. Select events: **Stars** and **Watches**\n7. Click \"Add webhook\"\n\n\
+        The application will verify the signature and send Discord notifications\n\
+        for first-time interactions only.\n"
       parameters:
-        - name: X-GitHub-Event
-          in: header
-          required: true
-          schema:
-            type: string
-            enum: [star, watch]
-          description: GitHub event type
-        - name: X-Hub-Signature-256
-          in: header
-          required: true
-          schema:
-            type: string
-          description: HMAC SHA-256 signature of the payload
+      - name: X-GitHub-Event
+        in: header
+        required: true
+        schema:
+          type: string
+          enum:
+          - star
+          - watch
+        description: GitHub event type
+      - name: X-Hub-Signature-256
+        in: header
+        required: true
+        schema:
+          type: string
+        description: HMAC SHA-256 signature of the payload
       requestBody:
         required: true
         content:
@@ -1511,7 +1672,7 @@ paths:
                 properties:
                   message:
                     type: string
-                    example: "Notification sent"
+                    example: Notification sent
         '400':
           description: Bad request - Invalid payload or missing headers
           content:

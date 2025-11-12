@@ -3,6 +3,7 @@
 /* Wider container for admin panel */
 body .container {
     max-width: 1400px;
+    padding: 20px;
 }
 
 .admin-header {
@@ -27,6 +28,14 @@ body .container {
 #api-keys-tab .card {
     padding: 20px;
     max-width: none;
+}
+
+/* Ensure table wrapper has consistent spacing */
+.keys-table-wrapper {
+    overflow-x: auto;
+    margin-top: 15px;
+    /* Add smooth scrolling on mobile */
+    -webkit-overflow-scrolling: touch;
 }
 
 #api-keys-tab .keys-header {
@@ -132,8 +141,9 @@ body .container {
 .keys-table {
     width: 100%;
     border-collapse: collapse;
-    margin-top: 15px;
+    margin-top: 0;
     table-layout: auto;
+    min-width: 1200px;
 }
 
 .keys-table th,
@@ -142,6 +152,7 @@ body .container {
     text-align: left;
     border-bottom: 1px solid var(--border-color);
     vertical-align: middle;
+    word-wrap: break-word;
 }
 
 .keys-table th {
@@ -151,6 +162,9 @@ body .container {
     font-size: 0.9em;
     text-transform: uppercase;
     letter-spacing: 0.5px;
+    position: sticky;
+    top: 0;
+    z-index: 10;
 }
 
 .keys-table tbody tr {
@@ -518,7 +532,7 @@ body .container {
 .permissions-inline {
     display: flex;
     flex-wrap: wrap;
-    gap: 15px;
+    gap: 12px;
     margin: 10px 0;
     padding: 10px;
     background-color: rgba(255, 255, 255, 0.02);
@@ -526,14 +540,14 @@ body .container {
 }
 
 .permission-checkbox {
-    display: flex;
+    display: inline-flex;
     align-items: center;
-    gap: 6px;
     cursor: pointer;
     padding: 6px 10px;
     border-radius: 4px;
     transition: background-color 0.2s;
     user-select: none;
+    min-width: fit-content;
 }
 
 .permission-checkbox:hover {
@@ -544,12 +558,17 @@ body .container {
     cursor: pointer;
     width: 16px;
     height: 16px;
+    margin: 0;
+    margin-bottom: -4px;
+    margin-right: 0.5em;
+    flex-shrink: 0;
 }
 
 .permission-checkbox span {
     font-size: 0.9em;
     color: var(--text-color);
     white-space: nowrap;
+    line-height: 1.4;
 }
 
 .permission-row {
@@ -580,7 +599,7 @@ body .container {
     border-radius: 4px;
     font-size: 0.85em;
     font-weight: 500;
-    background-color: rgba(52, 152, 219, 0.15);
+    background-color: #3498db26;
     color: #3498db;
     line-height: 1.4;
     max-width: 100%;

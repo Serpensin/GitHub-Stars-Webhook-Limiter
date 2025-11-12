@@ -4,4 +4,5 @@ requests
 sentry-sdk
 cryptography==39.0.2
 argon2-cffi
-CustomModules[loghandler,databasehandler,bitmaphandler]
+CustomModules[loghandler,bitmaphandler]
+aiosqlite

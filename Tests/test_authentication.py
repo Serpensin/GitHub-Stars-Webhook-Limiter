@@ -8,12 +8,13 @@ This script tests the API authentication system to ensure:
 """
 
 import json
+import re
 import unittest
 
 import requests
 
 BASE_URL = "http://127.0.0.1:5000"
-TEST_PASSWORD = "1234"
+TEST_PASSWORD = "1234" # NOSONAR
 
 
 class TestAuthentication(unittest.TestCase):
@@ -26,6 +27,19 @@ class TestAuthentication(unittest.TestCase):
         cls.admin_password = TEST_PASSWORD
         cls.session = None
         cls.test_api_key = None
+        cls.internal_secret = None
+        
+        # Get the internal secret from the admin page
+        try:
+            response = requests.get(f"{cls.base_url}/admin")
+            if response.status_code == 200:
+                # Extract the internal secret from the JavaScript in the HTML
+                match = re.search(r'window\.INTERNAL_SECRET = "([^"]+)"', response.text)
+                if match:
+                    cls.internal_secret = match.group(1)
+                    print("Retrieved internal secret for admin authentication")
+        except Exception as e:
+            print(f"Warning: Could not retrieve internal secret: {e}")
 
     def test_01_api_without_auth(self):
         """Test that API endpoints are blocked without authentication"""
@@ -51,9 +65,14 @@ class TestAuthentication(unittest.TestCase):
 
         self.__class__.session = requests.Session()
 
+        headers = {"Content-Type": "application/json"}
+        if self.__class__.internal_secret:
+            headers["X-Internal-Secret"] = self.__class__.internal_secret
+
         response = self.__class__.session.post(
             f"{self.base_url}/admin/api/login",
-            json={"password": self.admin_password}
+            json={"password": self.admin_password},
+            headers=headers
         )
         print(f"Login Status: {response.status_code}")
         print(f"Response: {response.json()}")

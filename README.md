@@ -2,7 +2,7 @@
 
 A Flask application that listens for GitHub webhook events (star, watch), validates them,
 and sends notifications to Discord webhooks if a user performs an action for the first time.
-It uses SQLite for persistence and supports Sentry for error monitoring.
+It supports both SQLite (default) and PostgreSQL databases, with Sentry for error monitoring.
 
 ## Features
 
@@ -14,7 +14,7 @@ It uses SQLite for persistence and supports Sentry for error monitoring.
 - ✅ **Web Interface**: Easy-to-use front-end for repository management
 - ✅ **API Key Authentication**: Secure programmatic access with Argon2id-hashed API keys
 - ✅ **Admin Panel**: Password-protected interface for API key management
-- ✅ **SQLite Database**: All configuration stored in SQLite (no config files needed)
+- ✅ **Database Support**: SQLite (default) or PostgreSQL
 - ✅ **Repository ID Tracking**: Uses GitHub repository and owner IDs for resilience against name changes
 - ✅ **Webhook Verification**: Responds to GitHub's ping event for webhook verification
 - ✅ **Health Check**: Provides monitoring endpoint
@@ -40,16 +40,41 @@ It uses SQLite for persistence and supports Sentry for error monitoring.
 
 #### Using Docker (Recommended)
 
-**IMPORTANT:** Docker's `--env-file` does not properly handle `$` symbols in Argon2 hashes. Use one of these methods:
+**Choose Your Database:**
 
-**Option 1: Using docker-compose (Recommended)**
+**Option A: SQLite (Default - Easiest Setup)**
 ```bash
 # Edit docker-compose.yml with your environment variables
 docker-compose up -d
 ```
 
-**Option 2: Using -e flags**
+**Option B: PostgreSQL**
+
+You have two options for PostgreSQL:
+
+1. **External PostgreSQL Server** (Recommended for Production)
+   ```bash
+   # Set PostgreSQL environment variables in .env file:
+   # POSTGRES_HOST=your-postgres-host
+   # POSTGRES_PORT=5432
+   # POSTGRES_DB=starlimiter
+   # POSTGRES_USER=starlimiter
+   # POSTGRES_PASSWORD=your_secure_password
+   
+   docker-compose up -d
+   ```
+
+2. **Embedded PostgreSQL** (Development/Testing)
+   ```bash
+   # Uses the docker-compose.postgresql.yml with embedded PostgreSQL
+   docker-compose -f docker-compose.postgresql.yml up -d
+   ```
+
+**IMPORTANT:** Docker's `--env-file` does not properly handle `$` symbols in Argon2 hashes. Use docker-compose or the methods below.
+
+**Manual Docker with Environment Variables:**
 ```bash
+# SQLite version
 docker build -t github-events-limiter .
 docker run -d -p 5000:5000 \
   -v $(pwd)/GitHub_Events_Limiter:/app/GitHub_Events_Limiter \
@@ -58,12 +83,31 @@ docker run -d -p 5000:5000 \
   -e FLASK_SECRET_KEY="your-flask-secret" \
   -e SENTRY_DSN="your-sentry-dsn" \
   github-events-limiter
+
+# PostgreSQL version (with embedded PostgreSQL server)
+docker build -f Dockerfile.postgresql -t github-events-limiter:postgresql .
+docker run -d -p 5000:5000 \
+  -v postgres_data:/var/lib/postgresql/data \
+  -e ENCRYPTION_KEY="your-encryption-key" \
+  -e ADMIN_PASSWORD_HASH='$argon2id$v=19$m=65536,t=3,p=4$...' \
+  -e FLASK_SECRET_KEY="your-flask-secret" \
+  -e SENTRY_DSN="your-sentry-dsn" \
+  github-events-limiter:postgresql
 ```
+
+**Note:** PostgreSQL version uses an internal default password. PostgreSQL port is not exposed outside the container for security.
+
+**Available Docker Images:**
+- `ghcr.io/serpensin/github-stars-webhook-limiter:latest` - SQLite version
+- `ghcr.io/serpensin/github-stars-webhook-limiter:postgresql` - PostgreSQL version (embedded server)
 
 #### Manual Installation
 
 ```bash
+# Install dependencies (includes PostgreSQL support via CustomModules[databasehandler])
 pip install -r requirements.txt
+
+# Run the application
 python main.py
 ```
 
@@ -78,6 +122,17 @@ ENCRYPTION_KEY=your-encryption-key-here      # REQUIRED: Fernet key for encrypti
 ADMIN_PASSWORD_HASH=your-argon2-hash-here    # REQUIRED: Admin password hash (must be valid Argon2)
 FLASK_SECRET_KEY=your-flask-secret-key-here  # REQUIRED: Flask session secret
 SENTRY_DSN=your-sentry-dsn-here              # Optional: For error monitoring
+
+# Database Configuration (Optional - defaults to SQLite)
+# For PostgreSQL, set ALL of these environment variables:
+# POSTGRES_HOST=localhost                    # PostgreSQL server hostname
+# POSTGRES_PORT=5432                         # PostgreSQL server port (default: 5432)
+# POSTGRES_DB=starlimiter                    # PostgreSQL database name
+# POSTGRES_USER=starlimiter                  # PostgreSQL username
+# POSTGRES_PASSWORD=your_secure_password     # PostgreSQL password
+
+# If ANY PostgreSQL variable is missing, SQLite will be used as fallback
+# SQLite database will be stored at: GitHub_Events_Limiter/data.db
 ```
 
 **⚠️ IMPORTANT:** Do NOT use the placeholder values above! The application validates that:
@@ -138,6 +193,7 @@ Star or watch your repository to verify Discord notifications work!
 - `GET /` - Main web interface for repository management
 - `GET /admin` - Admin panel for API key management (password protected)
 - `GET /license` - View license information
+- `GET /health` - Health check endpoint for monitoring (returns JSON with app and database status)
 
 ### Webhook
 - `POST /webhook` - GitHub webhook endpoint (handles star, watch, ping events)
@@ -214,7 +270,7 @@ The application requires three secrets to be set before starting:
 **Generate all secrets at once:**
 
 ```bash
-python generate_required_secrets.py
+python ./scripts/generate_required_secrets.py
 ```
 
 The script will:
@@ -280,6 +336,101 @@ python -c "from argon2 import PasswordHasher; ph = PasswordHasher(); print(ph.ha
 - **Discord Webhook Validation**: The app verifies Discord webhooks are active before saving
 - **HMAC Signature Validation**: All GitHub webhook payloads are validated using HMAC SHA-256
 
+## Monitoring & Health Checks
+
+The application provides a comprehensive health check endpoint for monitoring and container orchestration:
+
+- **Endpoint**: `/health`
+- **Response**: JSON with application status, version, and database connectivity
+- **HTTP Status Codes**:
+  - `200 OK` - Application and database are healthy
+  - `503 Service Unavailable` - Database is unreachable or unhealthy
+
+**Response Format:**
+
+```json
+{
+  "status": "healthy",
+  "app": "GitHub Events Limiter",
+  "version": "2.0.0",
+  "database": {
+    "type": "sqlite",
+    "status": "healthy"
+  }
+}
+```
+
+If the database is unhealthy:
+
+```json
+{
+  "status": "unhealthy",
+  "app": "GitHub Events Limiter",
+  "version": "2.0.0",
+  "database": {
+    "type": "postgresql",
+    "status": "unhealthy",
+    "error": "connection refused"
+  }
+}
+```
+
+**Docker Healthcheck Configuration:**
+
+The included `docker-compose.yml` files configure automatic health checks using a custom User-Agent header:
+
+```yaml
+healthcheck:
+  test: ["CMD", "curl", "-f", "-A", "Healthcheck", "http://localhost:5000/health"]
+  interval: 30s
+  timeout: 10s
+  retries: 3
+  start_period: 20s
+```
+
+**Logging Behavior:**
+
+- Health checks with `User-Agent: Healthcheck` are logged at **DEBUG** level
+- Other requests to `/health` are logged at **INFO** level
+- Database connectivity failures are always logged at **ERROR** level
+- This allows filtering health check noise while monitoring real traffic
+
+**Custom Monitoring:**
+
+To reduce log verbosity in your monitoring tools, set the User-Agent header:
+
+```bash
+curl -A "Healthcheck" http://localhost:5000/health
+```
+
+**Kubernetes Probes:**
+
+```yaml
+livenessProbe:
+  httpGet:
+    path: /health
+    port: 5000
+    httpHeaders:
+    - name: User-Agent
+      value: Healthcheck
+  initialDelaySeconds: 20
+  periodSeconds: 30
+  timeoutSeconds: 10
+  failureThreshold: 3
+
+readinessProbe:
+  httpGet:
+    path: /health
+    port: 5000
+    httpHeaders:
+    - name: User-Agent
+      value: Healthcheck
+  initialDelaySeconds: 10
+  periodSeconds: 10
+  timeoutSeconds: 5
+  failureThreshold: 3
+```
+
 ## Troubleshooting
 
 ### GitHub webhook shows error
@@ -326,17 +477,17 @@ The application will be available at `http://localhost:5000`
 
 ```bash
 # Format imports
-isort .
+py -m isort .
 
 # Format code
-black .
+py -m black .
 
 # Check code style
-pip install flake8-pyproject
-flake8 .
+py -m pip install flake8-pyproject
+py -m flake8 .
 
 # Run static analysis
-pylint . --fail-under=10.0
+py -m pylint *.py routes modules --fail-under=10.0
 ```
 
 ### Running Tests
@@ -376,7 +527,7 @@ python -m unittest Tests.test_all_endpoints -v
 ├── requirements.txt         # Python dependencies
 ├── .env                     # Environment variables (not in git)
 ├── pyproject.toml           # Tool configuration (black, flake8, pylint, isort)
-├── CustomModules/           # Custom Python modules
+├── modules/                 # Custom Python modules
 │   ├── AuthenticationHandler.py
 │   ├── BitmapHandler.py
 │   ├── DatabaseHandler.py
@@ -407,18 +558,6 @@ python -m unittest Tests.test_all_endpoints -v
 ├── docker-compose.yml       # Docker Compose configuration
 └── README.md                # This file
 ```
-
-## Migration from v1.x
-
-If you're upgrading from v1.x (config.json based):
-
-1. **Backup your data**: Save your old `config.json` and `data.db`
-2. **Note your secrets**: You'll need to re-add repositories with their secrets
-3. **Set encryption key**: Generate and save an encryption key
-4. **Use Web UI**: Add each repository through the new web interface
-5. **Update webhooks**: No changes needed in GitHub if the webhook URL is the same
-
-The old `starred_repo` table data will be preserved (user stars history).
 
 ## Contributing
 

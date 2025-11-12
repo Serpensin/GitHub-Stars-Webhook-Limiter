@@ -1,0 +1,11 @@
+{% extends "errors/base_error.html" %}
+
+{% set error_code = "503" %}
+{% set error_title = "Service Unavailable" %}
+{% set error_emoji = "🔧" %}
+{% set error_description = "We're currently performing maintenance or experiencing high load. Please check back shortly." %}
+
+{% block action_buttons %}
+<a href="javascript:location.reload()" class="btn btn-primary">🔄 Try Again</a>
+<a href="/" class="btn btn-secondary">🏠 Go Home</a>
+{% endblock %}

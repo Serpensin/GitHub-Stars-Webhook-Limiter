@@ -1,0 +1,11 @@
+{% extends "errors/base_error.html" %}
+
+{% set error_code = "405" %}
+{% set error_title = "Method Not Allowed" %}
+{% set error_emoji = "⛔" %}
+{% set error_description = "The HTTP method you used is not allowed for this endpoint. Please check the API documentation for allowed methods." %}
+
+{% block action_buttons %}
+<a href="/docs" class="btn btn-primary">📚 View API Docs</a>
+<a href="/" class="btn btn-secondary">🏠 Go Home</a>
+{% endblock %}

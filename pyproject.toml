@@ -81,11 +81,14 @@ disable = [
     "unused-import",
     "unspecified-encoding",
     "possibly-used-before-assignment",
+    "unnecessary-lambda",
+    "redefined-outer-name",
+    "too-many-nested-blocks",
 ]
 
 [tool.pylint.main]
 # Note: When running pylint, use specific paths instead of '.' to avoid scanning virtual environments
-# Example: python -m pylint *.py routes
+# Example: python -m pylint *.py routes modules
 ignore = [
     ".venv",
     "venv",
@@ -94,7 +97,16 @@ ignore = [
     "Tests",
     "GitHub_Events_Limiter",
     "__pycache__",
+    ".git",
+    ".vs",
+    ".vscode",
+    ".mypy_cache",
+    ".pytest_cache",
 ]
 ignore-paths = [
     ".*site-packages.*",
+    ".*[\\\\/]\\.venv[\\\\/].*",
+    ".*[\\\\/]venv[\\\\/].*",
+    ".*[\\\\/]Tests[\\\\/].*",
+    ".*[\\\\/]GitHub_Events_Limiter[\\\\/].*",
 ]

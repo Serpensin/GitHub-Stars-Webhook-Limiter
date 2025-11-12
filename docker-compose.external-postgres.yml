@@ -1,0 +1,101 @@
+services:
+  cloudflared:
+    restart: unless-stopped
+    image: cloudflare/cloudflared:latest
+    command: tunnel --no-autoupdate run --token <YOUR_CLOUDFLARED_TOKEN>
+
+  postgres:
+    container_name: StarLimiter-PostgreSQL
+    restart: unless-stopped
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: starlimiter
+      POSTGRES_USER: starlimiter
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-Kp9mN4xR7jL2wQ5vH8sT3yB6nF1cZ0eA}
+      # Performance tuning for high-throughput INSERT workloads
+      POSTGRES_INITDB_ARGS: "-E UTF8 --locale=C"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U starlimiter -d starlimiter"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    hostname: postgres
+    networks:
+      - app_network
+    command:
+      - "postgres"
+      # Performance tuning parameters
+      - "-c"
+      - "shared_buffers=256MB"
+      - "-c"
+      - "effective_cache_size=1GB"
+      - "-c"
+      - "maintenance_work_mem=64MB"
+      - "-c"
+      - "checkpoint_completion_target=0.9"
+      - "-c"
+      - "wal_buffers=16MB"
+      - "-c"
+      - "default_statistics_target=100"
+      - "-c"
+      - "random_page_cost=1.1"
+      - "-c"
+      - "effective_io_concurrency=200"
+      - "-c"
+      - "work_mem=4MB"
+      - "-c"
+      - "min_wal_size=1GB"
+      - "-c"
+      - "max_wal_size=4GB"
+      - "-c"
+      - "synchronous_commit=off"
+      - "-c"
+      - "wal_writer_delay=200ms"
+      - "-c"
+      - "commit_delay=1000"
+      - "-c"
+      - "commit_siblings=5"
+      - "-c"
+      - "max_connections=100"
+
+  app:
+    container_name: StarLimiter
+    restart: unless-stopped
+    env_file:
+      - .env  # Use .env file for sensitive environment variables
+    environment:
+      LOG_LEVEL: INFO  # Options: DEBUG, INFO, WARNING, ERROR, CRITICAL
+      # ENCRYPTION_KEY, ADMIN_PASSWORD_HASH, FLASK_SECRET_KEY, and SENTRY_DSN
+      # should be defined in .env file (copy from .env.example)
+      # PostgreSQL connection settings
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: starlimiter
+      POSTGRES_USER: starlimiter
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-Kp9mN4xR7jL2wQ5vH8sT3yB6nF1cZ0eA}
+    image: ghcr.io/serpensin/github-stars-webhook-limiter:latest
+    volumes:
+      - logs:/app/GitHub_Events_Limiter/logs  # Persists application logs
+    healthcheck:
+      test: ["CMD", "curl", "-f", "-A", "Healthcheck", "http://localhost:5000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    hostname: starlimiter
+    networks:
+      - app_network
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+volumes:
+  postgres_data:
+  logs:
+
+networks:
+  app_network:
+    driver: bridge

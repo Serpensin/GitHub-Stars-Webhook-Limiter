@@ -1,24 +1,24 @@
 // Tab switching
 function showTab(tabName, clickEvent) {
     // Hide all tabs
-    document.querySelectorAll('.tab-content').forEach(tab => {
+    for (const tab of document.querySelectorAll('.tab-content')) {
         tab.classList.remove('active');
-    });
-    document.querySelectorAll('.tab-button').forEach(button => {
+    }
+    for (const button of document.querySelectorAll('.tab-button')) {
         button.classList.remove('active');
-    });
+    }
     
     // Show selected tab
     document.getElementById(`${tabName}-tab`).classList.add('active');
-    if (clickEvent && clickEvent.target) {
+    if (clickEvent?.target) {
         clickEvent.target.classList.add('active');
     } else {
         // If called programmatically, find and activate the button
-        document.querySelectorAll('.tab-button').forEach(button => {
+        for (const button of document.querySelectorAll('.tab-button')) {
             if (button.getAttribute('onclick').includes(tabName)) {
                 button.classList.add('active');
             }
-        });
+        }
     }
     
     // Reset manage tab state when switching away
@@ -37,7 +37,7 @@ async function generateSecret(inputId) {
     try {
         const response = await fetch('/api/generate-secret', {
             headers: {
-                'X-CSRF-Token': window.CSRF_TOKEN,
+                'X-CSRF-Token': globalThis.CSRF_TOKEN,
                 'X-Request-Time': Math.floor(Date.now() / 1000).toString(),
                 'X-Request-Nonce': generateNonce()
             }
@@ -49,7 +49,7 @@ async function generateSecret(inputId) {
          showStatus('Secret generated successfully! Don\'t forget to copy it.', 'success');
         } else if (data.new_token) {
             // Token expired, update and retry
-            window.CSRF_TOKEN = data.new_token;
+            globalThis.CSRF_TOKEN = data.new_token;
             return generateSecret(inputId);
         }
     } catch (error) {
@@ -57,22 +57,27 @@ async function generateSecret(inputId) {
     }
 }
 
-// Generate a unique nonce for each request (prevents replay attacks)
+// Generate a cryptographically secure random nonce for each request (prevents replay attacks)
 function generateNonce() {
-    return Math.random().toString(36).substring(2) + Date.now().toString(36);
+    const array = new Uint32Array(4);
+    crypto.getRandomValues(array);
+    return Array.from(array, num => num.toString(16).padStart(8, '0')).join('');
 }
 
 // Copy to clipboard
-function copyToClipboard(inputId) {
+async function copyToClipboard(inputId) {
     const input = document.getElementById(inputId);
-    if (!input.value) {
-   showStatus('No secret to copy!', 'error');
-      return;
+    if (!input?.value) {
+        showStatus('No secret to copy!', 'error');
+        return;
     }
-    
-    input.select();
-    document.execCommand('copy');
-    showStatus('Secret copied to clipboard!', 'success');
+
+    try {
+        await navigator.clipboard.writeText(input.value);
+        showStatus('Secret copied to clipboard!', 'success');
+    } catch (err) {
+        showStatus('Copy failed: ' + err.message, 'error');
+    }
 }
 
 // Show status message
@@ -95,7 +100,9 @@ function hideStatus() {
 }
 
 // Add repository form submission
-document.getElementById('add-form').addEventListener('submit', async (e) => {
+const addForm = document.getElementById('add-form');
+if (addForm) {
+    addForm.addEventListener('submit', async (e) => {
     e.preventDefault();
     
     const repoUrl = document.getElementById('add-repo-url').value.trim();
@@ -118,7 +125,7 @@ document.getElementById('add-form').addEventListener('submit', async (e) => {
    method: 'POST',
          headers: {
        'Content-Type': 'application/json',
-                'X-CSRF-Token': window.CSRF_TOKEN,
+                'X-CSRF-Token': globalThis.CSRF_TOKEN,
                 'X-Request-Time': Math.floor(Date.now() / 1000).toString(),
                 'X-Request-Nonce': generateNonce()
             },
@@ -136,17 +143,22 @@ document.getElementById('add-form').addEventListener('submit', async (e) => {
          showStatus(`✅ ${data.message} - ${data.repo_full_name}`, 'success');
        document.getElementById('add-form').reset();
 // Re-check default events
-            document.querySelectorAll('input[name="events"]').forEach(cb => cb.checked = true);
+            for (const cb of document.querySelectorAll('input[name="events"]')) {
+                cb.checked = true;
+            }
 } else {
         showStatus(`❌ ${data.error}`, 'error');
         }
     } catch (error) {
  showStatus(`❌ Network error: ${error.message}`, 'error');
     }
-});
+    });
+}
 
 // Verify repository form submission
-document.getElementById('verify-form').addEventListener('submit', async (e) => {
+const verifyForm = document.getElementById('verify-form');
+if (verifyForm) {
+    verifyForm.addEventListener('submit', async (e) => {
     e.preventDefault();
     
     const repoUrl = document.getElementById('verify-repo-url').value.trim();
@@ -159,7 +171,7 @@ document.getElementById('verify-form').addEventListener('submit', async (e) => {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
-                'X-CSRF-Token': window.CSRF_TOKEN,
+                'X-CSRF-Token': globalThis.CSRF_TOKEN,
                 'X-Request-Time': Math.floor(Date.now() / 1000).toString(),
                 'X-Request-Nonce': generateNonce()
             },
@@ -192,10 +204,13 @@ document.getElementById('verify-form').addEventListener('submit', async (e) => {
     } catch (error) {
         showStatus(`❌ Network error: ${error.message}`, 'error');
     }
-});
+    });
+}
 
 // Edit repository form submission
-document.getElementById('edit-form').addEventListener('submit', async (e) => {
+const editForm = document.getElementById('edit-form');
+if (editForm) {
+    editForm.addEventListener('submit', async (e) => {
     e.preventDefault();
     
     const repoId = document.getElementById('edit-repo-id').value;
@@ -227,7 +242,7 @@ document.getElementById('edit-form').addEventListener('submit', async (e) => {
             method: 'PUT',
     headers: {
      'Content-Type': 'application/json',
-                'X-CSRF-Token': window.CSRF_TOKEN,
+                'X-CSRF-Token': globalThis.CSRF_TOKEN,
                 'X-Request-Time': Math.floor(Date.now() / 1000).toString(),
                 'X-Request-Nonce': generateNonce()
      },
@@ -253,7 +268,8 @@ document.getElementById('edit-form').addEventListener('submit', async (e) => {
     } catch (error) {
         showStatus(`❌ Network error: ${error.message}`, 'error');
     }
-});
+    });
+}
 
 // Delete repository
 async function deleteRepository() {
@@ -271,7 +287,7 @@ async function deleteRepository() {
             method: 'DELETE',
        headers: {
       'Content-Type': 'application/json',
-                'X-CSRF-Token': window.CSRF_TOKEN,
+                'X-CSRF-Token': globalThis.CSRF_TOKEN,
                 'X-Request-Time': Math.floor(Date.now() / 1000).toString(),
                 'X-Request-Nonce': generateNonce()
   },
@@ -298,10 +314,37 @@ async function deleteRepository() {
 }
 
 // Set webhook URL dynamically
-window.addEventListener('DOMContentLoaded', () => {
-    const webhookUrl = `${window.location.origin}/webhook`;
+globalThis.addEventListener('DOMContentLoaded', () => {
+    const webhookUrl = `${globalThis.location.origin}/webhook`;
     const webhookUrlElement = document.getElementById('webhook-url');
     if (webhookUrlElement) {
         webhookUrlElement.textContent = webhookUrl;
     }
+    
+    // Fetch and populate cleanup config values
+    fetch('/api/stats', {
+        headers: {
+            'X-CSRF-Token': globalThis.CSRF_TOKEN,
+            'X-Request-Time': Math.floor(Date.now() / 1000).toString(),
+            'X-Request-Nonce': generateNonce()
+        }
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.cleanup_config) {
+            const reposDays = document.getElementById('cleanup-repos-days');
+            const apiKeysDays = document.getElementById('cleanup-apikeys-days');
+            
+            if (reposDays) {
+                reposDays.textContent = data.cleanup_config.repositories_inactive_days;
+            }
+            if (apiKeysDays) {
+                apiKeysDays.textContent = data.cleanup_config.api_keys_inactive_days;
+            }
+        }
+    })
+    .catch(error => {
+        console.log('Could not fetch cleanup config:', error);
+        // Keep default values if fetch fails
+    });
 });

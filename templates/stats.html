@@ -1,0 +1,344 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>GitHub Stars Webhook Limiter - Statistics</title>
+    <link rel="icon" type="image/svg+xml" href="/favicon.ico">
+    <link rel="stylesheet" href="/static/style.css">
+    <script type="module">
+        // CSRF token for API authentication
+        // Sanitized to prevent XSS via Jinja2 escaping
+        globalThis.CSRF_TOKEN = {{ csrf_token | tojson }};
+        
+        // Generate a cryptographically secure random nonce for replay protection
+        function generateNonce() {
+            const array = new Uint32Array(4);
+            crypto.getRandomValues(array);
+            return Array.from(array, num => num.toString(16).padStart(8, '0')).join('');
+        }
+    </script>
+    <style>
+        .stats-container {
+            max-width: 1200px;
+            margin: 20px auto;
+            padding: 20px;
+        }
+
+        .stats-section {
+            background: var(--card-bg);
+            border-radius: 8px;
+            padding: 20px;
+            margin-bottom: 20px;
+            box-shadow: var(--shadow);
+        }
+
+        .stats-section h2 {
+            margin-top: 0;
+            color: var(--text-color);
+            border-bottom: 2px solid var(--primary-color);
+            padding-bottom: 10px;
+        }
+
+        .stat-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 15px;
+            margin-top: 15px;
+        }
+
+        .stat-item {
+            background: var(--darker-bg);
+            padding: 15px;
+            border-radius: 5px;
+            border-left: 4px solid var(--primary-color);
+        }
+
+        .stat-item.warning {
+            border-left-color: var(--warning-color);
+        }
+
+        .stat-item.danger {
+            border-left-color: var(--danger-color);
+        }
+
+        .stat-label {
+            font-size: 0.9em;
+            color: var(--text-muted);
+            margin-bottom: 5px;
+        }
+
+        .stat-value {
+            font-size: 2em;
+            font-weight: bold;
+            color: var(--text-color);
+        }
+
+        .top-users-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 15px;
+            background: var(--darker-bg);
+        }
+
+        .top-users-table th,
+        .top-users-table td {
+            padding: 12px;
+            text-align: left;
+            border-bottom: 1px solid var(--border-color);
+            color: var(--text-color);
+        }
+
+        .top-users-table th {
+            background-color: var(--primary-color);
+            color: white;
+            font-weight: bold;
+        }
+
+        .top-users-table tr:hover {
+            background-color: var(--card-bg);
+        }
+
+        .timestamp {
+            text-align: right;
+            color: var(--text-muted);
+            font-size: 0.85em;
+            margin-top: 10px;
+        }
+
+        .loading {
+            text-align: center;
+            padding: 40px;
+            font-size: 1.2em;
+            color: var(--text-muted);
+        }
+
+        .error {
+            background: rgba(240, 71, 71, 0.2);
+            color: var(--danger-color);
+            padding: 15px;
+            border-radius: 5px;
+            margin: 20px;
+            border: 1px solid var(--danger-color);
+        }
+
+        .refresh-button {
+            background: var(--primary-color);
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 1em;
+            margin-bottom: 20px;
+            transition: background 0.3s ease;
+        }
+
+        .refresh-button:hover {
+            background: var(--secondary-color);
+        }
+    </style>
+</head>
+
+<body>
+    <div class="container">
+        <header>
+            <h1>📊 GitHub Events Limiter</h1>
+            <p>System Statistics & Analytics</p>
+            <div style="text-align: right; margin-top: 10px;">
+                <a href="/" style="color: #666; text-decoration: none; font-size: 0.9em; margin-right: 15px;">🏠 Home</a>
+                <a href="/docs" style="color: #666; text-decoration: none; font-size: 0.9em; margin-right: 15px;">📚 API Docs</a>
+                <a href="/try" style="color: #666; text-decoration: none; font-size: 0.9em; margin-right: 15px;">🧪 Try API</a>
+                <a href="/stats" style="color: #667eea; text-decoration: none; font-size: 0.9em; margin-right: 15px; font-weight: 500;">📊 Stats</a>
+                <a href="/admin" style="color: #666; text-decoration: none; font-size: 0.9em;">🔐 Admin Panel</a>
+            </div>
+        </header>
+
+    <div class="stats-container">
+        <button class="refresh-button" onclick="loadStats()">Refresh Stats</button>
+        <div id="stats-content">
+            <div class="loading">Loading statistics...</div>
+        </div>
+    </div>
+
+    <script>
+        async function loadStats() {
+            const content = document.getElementById('stats-content');
+            content.innerHTML = '<div class="loading">Loading statistics...</div>';
+
+            try {
+                const response = await fetch('/api/stats', {
+                    headers: {
+                        'X-CSRF-Token': globalThis.CSRF_TOKEN,
+                        'X-Request-Time': Math.floor(Date.now() / 1000).toString(),
+                        'X-Request-Nonce': generateNonce()
+                    }
+                });
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+                const data = await response.json();
+                renderStats(data);
+            } catch (error) {
+                // Sanitize error message to prevent XSS
+                const errorDiv = document.createElement('div');
+                errorDiv.className = 'error';
+                errorDiv.textContent = `Failed to load statistics: ${error.message}`;
+                content.innerHTML = '';
+                content.appendChild(errorDiv);
+            }
+        }
+
+        function renderStats(data) {
+            const content = document.getElementById('stats-content');
+            content.innerHTML = ''; // Clear content
+
+            // Create stats sections using DOM manipulation
+            const statsSection1 = document.createElement('div');
+            statsSection1.className = 'stats-section';
+            statsSection1.innerHTML = `
+                <h2>Current Statistics</h2>
+                <div class="stat-grid">
+                    <div class="stat-item">
+                        <div class="stat-label">Active Repositories</div>
+                        <div class="stat-value">${Number.parseInt(data.totals.repositories_current) || 0}</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-label">Active API Keys</div>
+                        <div class="stat-value">${Number.parseInt(data.totals.api_keys_current) || 0}</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-label">Total Events Received</div>
+                        <div class="stat-value">${Number.parseInt(data.totals.events_received) || 0}</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-label">Unique Events</div>
+                        <div class="stat-value">${Number.parseInt(data.totals.unique_events) || 0}</div>
+                    </div>
+                    <div class="stat-item warning">
+                        <div class="stat-label">Duplicate Events</div>
+                        <div class="stat-value">${Number.parseInt(data.totals.duplicate_events) || 0}</div>
+                    </div>
+                </div>
+            `;
+            content.appendChild(statsSection1);
+
+            const statsSection2 = document.createElement('div');
+            statsSection2.className = 'stats-section';
+            statsSection2.innerHTML = `
+                <h2>Automatic Deletions</h2>
+                <div class="stat-grid">
+                    <div class="stat-item danger">
+                        <div class="stat-label">Repos (360 days inactive)</div>
+                        <div class="stat-value">${Number.parseInt(data.deletions.repos_inactive_360_days) || 0}</div>
+                    </div>
+                    <div class="stat-item danger">
+                        <div class="stat-label">Repos (GitHub deleted)</div>
+                        <div class="stat-value">${Number.parseInt(data.deletions.repos_github_deleted) || 0}</div>
+                    </div>
+                    <div class="stat-item danger">
+                        <div class="stat-label">Repos (Invalid webhook)</div>
+                        <div class="stat-value">${Number.parseInt(data.deletions.repos_webhook_invalid) || 0}</div>
+                    </div>
+                    <div class="stat-item danger">
+                        <div class="stat-label">API Keys (360 days inactive)</div>
+                        <div class="stat-value">${Number.parseInt(data.deletions.api_keys_inactive_360_days) || 0}</div>
+                    </div>
+                </div>
+            `;
+            content.appendChild(statsSection2);
+
+            const statsSection3 = document.createElement('div');
+            statsSection3.className = 'stats-section';
+            const table1 = document.createElement('table');
+            table1.className = 'top-users-table';
+            table1.innerHTML = `
+                <h2>Top Users by Valid Events</h2>
+                <thead>
+                    <tr>
+                        <th>Rank</th>
+                        <th>Username</th>
+                        <th>Valid Events</th>
+                    </tr>
+                </thead>
+            `;
+            const tbody1 = document.createElement('tbody');
+            renderTopUsers(data.top_users.valid_events, tbody1);
+            table1.appendChild(tbody1);
+            statsSection3.appendChild(table1);
+            content.appendChild(statsSection3);
+
+            const statsSection4 = document.createElement('div');
+            statsSection4.className = 'stats-section';
+            const table2 = document.createElement('table');
+            table2.className = 'top-users-table';
+            table2.innerHTML = `
+                <h2>Top Users by Invalid Events</h2>
+                <thead>
+                    <tr>
+                        <th>Rank</th>
+                        <th>Username</th>
+                        <th>Invalid Events</th>
+                    </tr>
+                </thead>
+            `;
+            const tbody2 = document.createElement('tbody');
+            renderTopUsers(data.top_users.invalid_events, tbody2);
+            table2.appendChild(tbody2);
+            statsSection4.appendChild(table2);
+            content.appendChild(statsSection4);
+
+            const timestamp = document.createElement('div');
+            timestamp.className = 'timestamp';
+            timestamp.textContent = `Last updated: ${new Date(data.timestamp * 1000).toLocaleString()}`;
+            content.appendChild(timestamp);
+        }
+
+        function renderTopUsers(users, tbody) {
+            if (!users || users.length === 0) {
+                const tr = document.createElement('tr');
+                const td = document.createElement('td');
+                td.setAttribute('colspan', '3');
+                td.style.textAlign = 'center';
+                td.textContent = 'No data available';
+                tr.appendChild(td);
+                tbody.appendChild(tr);
+                return;
+            }
+
+            let index = 0;
+            for (const user of users) {
+                const tr = document.createElement('tr');
+                
+                const td1 = document.createElement('td');
+                td1.textContent = String(index + 1);
+                tr.appendChild(td1);
+                
+                const td2 = document.createElement('td');
+                td2.textContent = user.username;
+                tr.appendChild(td2);
+                
+                const td3 = document.createElement('td');
+                td3.textContent = String(user.count);
+                tr.appendChild(td3);
+                
+                tbody.appendChild(tr);
+                index++;
+            }
+        }
+
+        // Load stats on page load
+        await loadStats();
+
+        // Auto-refresh every 30 seconds
+        setInterval(loadStats, 30000);
+    </script>
+
+    <footer>
+    <p>GitHub Events Limiter v2.0.0 | <a href="https://github.com/Serpensin/GitHub-Stars-Webhook-Limiter" target="_blank" rel="noopener noreferrer">Source Code</a> | <a href="/">Home</a></p>
+    </footer>
+    </div>
+</body>
+
+</html>

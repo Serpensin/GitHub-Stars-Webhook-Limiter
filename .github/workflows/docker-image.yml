@@ -15,6 +15,7 @@ jobs:
     strategy:
       matrix:
         platform: [linux/386, linux/amd64]
+        variant: [sqlite, postgresql]
 
     steps:
     - name: Checkout Code
@@ -36,10 +37,20 @@ jobs:
         REPO_NAME=$(echo "${{ github.event.repository.name }}" | tr '[:upper:]' '[:lower:]')
         IMAGE_NAME="ghcr.io/$REPO_OWNER/$REPO_NAME"
         PLATFORM_TAG=$(echo "${{ matrix.platform }}" | tr '/' '-')
+        
+        if [ "${{ matrix.variant }}" = "postgresql" ]; then
+          DOCKERFILE="Dockerfile.postgresql"
+          TAG_SUFFIX="-postgresql"
+        else
+          DOCKERFILE="Dockerfile"
+          TAG_SUFFIX=""
+        fi
+        
         docker buildx build \
           --compress \
           --platform ${{ matrix.platform }} \
-          --tag $IMAGE_NAME:latest-${PLATFORM_TAG} \
+          --file $DOCKERFILE \
+          --tag $IMAGE_NAME:latest${TAG_SUFFIX}-${PLATFORM_TAG} \
           --push .
       shell: bash
 
@@ -48,6 +59,7 @@ jobs:
     strategy:
       matrix:
         platform: [linux/arm/v7, linux/arm64/v8]
+        variant: [sqlite, postgresql]
 
     steps:
     - name: Checkout Code
@@ -69,10 +81,20 @@ jobs:
         REPO_NAME=$(echo "${{ github.event.repository.name }}" | tr '[:upper:]' '[:lower:]')
         IMAGE_NAME="ghcr.io/$REPO_OWNER/$REPO_NAME"
         PLATFORM_TAG=$(echo "${{ matrix.platform }}" | tr '/' '-')
+        
+        if [ "${{ matrix.variant }}" = "postgresql" ]; then
+          DOCKERFILE="Dockerfile.postgresql"
+          TAG_SUFFIX="-postgresql"
+        else
+          DOCKERFILE="Dockerfile"
+          TAG_SUFFIX=""
+        fi
+        
         docker buildx build \
           --compress \
           --platform ${{ matrix.platform }} \
-          --tag $IMAGE_NAME:latest-${PLATFORM_TAG} \
+          --file $DOCKERFILE \
+          --tag $IMAGE_NAME:latest${TAG_SUFFIX}-${PLATFORM_TAG} \
           --push .
       shell: bash
 
@@ -87,7 +109,7 @@ jobs:
         username: ${{ github.actor }}
         password: ${{ secrets.GITHUB_TOKEN }}
 
-    - name: Create Multi-Architecture Latest Tag
+    - name: Create Multi-Architecture Latest Tag (SQLite)
       run: |
         REPO_OWNER=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
         REPO_NAME=$(echo "${{ github.event.repository.name }}" | tr '[:upper:]' '[:lower:]')
@@ -98,4 +120,17 @@ jobs:
           $IMAGE_NAME:latest-linux-amd64 \
           $IMAGE_NAME:latest-linux-arm-v7 \
           $IMAGE_NAME:latest-linux-arm64-v8
+      shell: bash
+
+    - name: Create Multi-Architecture Latest Tag (PostgreSQL)
+      run: |
+        REPO_OWNER=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
+        REPO_NAME=$(echo "${{ github.event.repository.name }}" | tr '[:upper:]' '[:lower:]')
+        IMAGE_NAME="ghcr.io/$REPO_OWNER/$REPO_NAME"
+        docker buildx imagetools create \
+          --tag $IMAGE_NAME:postgresql \
+          $IMAGE_NAME:latest-postgresql-linux-386 \
+          $IMAGE_NAME:latest-postgresql-linux-amd64 \
+          $IMAGE_NAME:latest-postgresql-linux-arm-v7 \
+          $IMAGE_NAME:latest-postgresql-linux-arm64-v8
       shell: bash

@@ -4,12 +4,13 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>GitHub Events Limiter - Repository Management</title>
-    <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
+    <link rel="icon" type="image/svg+xml" href="/favicon.ico">
     <link rel="stylesheet" href="/static/style.css">
     <script>
         // CSRF token for API authentication - session-specific
         // Even if someone sees this token, they can't use it from a different session
-        window.CSRF_TOKEN = "{{ csrf_token }}";
+        // Sanitized to prevent XSS via Jinja2 escaping
+        window.CSRF_TOKEN = {{ csrf_token | tojson }};
     </script>
 </head>
 <body>
@@ -20,6 +21,7 @@
             <div style="text-align: right; margin-top: 10px;">
                 <a href="/docs" style="color: #666; text-decoration: none; font-size: 0.9em; margin-right: 15px;">📚 API Docs</a>
                 <a href="/try" style="color: #667eea; text-decoration: none; font-size: 0.9em; margin-right: 15px; font-weight: 500;">🧪 Try API</a>
+                <a href="/stats" style="color: #666; text-decoration: none; font-size: 0.9em; margin-right: 15px;">📊 Stats</a>
                 <a href="/admin" style="color: #666; text-decoration: none; font-size: 0.9em;">🔐 Admin Panel</a>
             </div>
         </header>
@@ -162,13 +164,26 @@
      </li>
        <li><strong>Test:</strong> Star or watch your repository to verify Discord notifications work!</li>
         </ol>
+
+        <div style="margin-top: 30px; padding: 15px; background: #fff3cd; border-left: 4px solid #ffc107; border-radius: 5px;">
+            <h3 style="margin-top: 0; color: #856404;">⚠️ Automatic Cleanup Policy</h3>
+            <p style="margin-bottom: 5px;"><strong>This service automatically removes:</strong></p>
+            <ul style="margin: 10px 0; padding-left: 20px;">
+                <li><strong>Repositories:</strong> Deleted after <span id="cleanup-repos-days">360</span> days of inactivity (no events received)</li>
+                <li><strong>Invalid Webhooks:</strong> Repositories are removed if Discord webhook becomes invalid (checked every 28 days)</li>
+                <li><strong>Deleted Repos:</strong> Repositories are removed if the GitHub repository no longer exists (checked every 28 days)</li>
+                <li><strong>API Keys:</strong> Non-admin API keys are deleted after <span id="cleanup-apikeys-days">360</span> days of inactivity</li>
+            </ul>
+            <p style="margin-bottom: 0;"><small>💡 Regular webhook events will keep your repository active. View system stats at <a href="/stats" style="color: #856404; font-weight: bold;">/stats</a></small></p>
+        </div>
         </div>
     </div>
 
     <footer>
-        <p>GitHub Events Limiter v2.0.0 | <a href="https://github.com/Serpensin/GitHub-Stars-Webhook-Limiter" target="_blank">Source Code</a></p>
+        <p>GitHub Events Limiter v2.0.0 | <a href="https://github.com/Serpensin/GitHub-Stars-Webhook-Limiter" target="_blank" rel="noopener noreferrer">Source Code</a> | <a href="/stats">System Stats</a></p>
     </footer>
 
     <script src="/static/script.js"></script>
 </body>
 </html>
+

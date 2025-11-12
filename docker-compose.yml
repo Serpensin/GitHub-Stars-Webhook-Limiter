@@ -7,17 +7,25 @@ services:
   app:
     container_name: StarLimiter
     restart: unless-stopped
+    env_file:
+      - .env  # Use .env file for sensitive environment variables
     environment:
-      SENTRY_DSN: SENTRY_DSN_FOR_ERROR_REPORTING
       LOG_LEVEL: INFO  # Options: DEBUG, INFO, WARNING, ERROR, CRITICAL
-      ENCRYPTION_KEY: your-encryption-key-here  # REQUIRED: Generate with Fernet.generate_key()
-      ADMIN_PASSWORD_HASH: your-argon2-hash-here  # REQUIRED: Hash your admin password with argon2
-      FLASK_SECRET_KEY: your-flask-secret-key-here  # REQUIRED: Generate with secrets.token_hex(32)
-    image: ghcr.io/serpensin/github-stars-webhook-limiter
+      # ENCRYPTION_KEY, ADMIN_PASSWORD_HASH, FLASK_SECRET_KEY, and SENTRY_DSN
+      # should be defined in .env file (copy from .env.example)
+      # PostgreSQL connection settings (optional - uses SQLite if not provided)
+      # To use PostgreSQL, set ALL of these environment variables:
+      # POSTGRES_HOST: postgres_host
+      # POSTGRES_PORT: 5432
+      # POSTGRES_DB: starlimiter
+      # POSTGRES_USER: starlimiter
+      # POSTGRES_PASSWORD: your_secure_password
+      # If any are missing, SQLite will be used instead
+    image: ghcr.io/serpensin/github-stars-webhook-limiter:latest
     volumes:
       - data:/app/GitHub_Events_Limiter  # Persists database and logs across container restarts
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:5000"]
+      test: ["CMD", "curl", "-f", "-A", "Healthcheck", "http://localhost:5000/health"]
       interval: 30s
       timeout: 10s
       retries: 3

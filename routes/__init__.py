@@ -25,26 +25,33 @@ def register_blueprints(app: Flask, helpers: dict):
     # Initialize web routes
     init_web_routes(
         helpers["logger"],
+        helpers["db_type"],
         helpers["get_repository_by_id"],
         helpers["decrypt_secret"],
         helpers["verify_github_signature"],
         helpers["has_user_triggered_event_before"],
-        helpers["send_discord_notification"],
+        helpers["discord_handler"],
         helpers["add_user_event"],
+        helpers["get_db"],
+        helpers["increment_stat"],
+        helpers["get_all_stats"],
+        helpers["get_top_users"],
     )
 
     # Initialize API routes
     init_api_routes(
         helpers["logger"],
         helpers["require_api_key_or_csrf"],
-        helpers["extract_repo_info_from_url"],
-        helpers["fetch_repo_data_from_github"],
-        helpers["verify_discord_webhook"],
+        helpers["github_handler"],
+        helpers["discord_handler"],
         helpers["encrypt_secret"],
         helpers["get_db"],
         helpers["get_repository_by_id"],
         helpers["verify_secret"],
         helpers["bitmap_handler"],
+        helpers["increment_stat"],
+        helpers["get_all_stats"],
+        helpers["get_top_users"],
     )
 
     # Initialize admin routes
@@ -54,6 +61,8 @@ def register_blueprints(app: Flask, helpers: dict):
         helpers["verify_admin_password"],
         helpers["hash_api_key"],
         helpers["get_db"],
+        helpers["increment_stat"],
+        helpers["internal_server_secret"],
     )
 
     # Register blueprints

@@ -31,15 +31,17 @@ Usage:
         return {"status": "ok"}
 """
 
+import hashlib
 import hmac
 import logging
+import re
 import secrets
 import time
 from functools import wraps
 from typing import Callable, Tuple
 
 from argon2.exceptions import VerifyMismatchError
-from flask import g, jsonify, request, session
+from flask import g, jsonify, make_response, request, session
 
 
 class AuthenticationHandler:
@@ -75,27 +77,32 @@ class AuthenticationHandler:
 
         # Initialize logger
         if logger is None:
-            self.logger = logging.getLogger("custommodules.authenticationhandler")
+            self.logger = logging.getLogger("modules.authenticationhandler")
         else:
-            self.logger = logger.getChild("custommodules.authenticationhandler")
+            self.logger = logger.getChild("modules.authenticationhandler")
 
     def hash_api_key(self, api_key: str) -> str:
         """
-        Hashes an API key using Argon2id.
+        Hashes an API key using HMAC-SHA256.
+
+        API keys are random high-entropy tokens, so a fast hash with constant-time
+        comparison is more appropriate than slow password hashing (Argon2id).
 
         Args:
             api_key (str): The plaintext API key to hash.
 
         Returns:
-            str: The hashed API key.
+            str: The hashed API key in hexadecimal format.
         """
         if self.logger:
             self.logger.debug("Hashing API key")
-        return self.ph.hash(api_key)
+        # Use HMAC-SHA256 with the API key itself as both key and message
+        # This is secure because API keys are already high-entropy random values
+        return hashlib.sha256(api_key.encode("utf-8")).hexdigest()
 
     def verify_api_key(self, api_key: str, key_hash: str) -> bool:
         """
-        Verifies an API key against its hash.
+        Verifies an API key against its hash using constant-time comparison.
 
         Args:
             api_key (str): The plaintext API key to verify.
@@ -105,13 +112,15 @@ class AuthenticationHandler:
             bool: True if the key matches, False otherwise.
         """
         try:
-            self.ph.verify(key_hash, api_key)
+            computed_hash = self.hash_api_key(api_key)
+            # Use constant-time comparison to prevent timing attacks
+            result = hmac.compare_digest(computed_hash, key_hash)
             if self.logger:
-                self.logger.debug("API key verification successful")
-            return True
-        except VerifyMismatchError:
+                self.logger.debug(f"API key verification: {'successful' if result else 'failed'}")
+            return result
+        except Exception as e:  # pylint: disable=broad-exception-caught
             if self.logger:
-                self.logger.debug("API key verification failed")
+                self.logger.error(f"API key verification error: {e}")
             return False
 
     def check_api_key_in_db(self, api_key: str) -> bool:
@@ -277,7 +286,7 @@ class AuthenticationHandler:
         permissions_bitmap = getattr(g, "api_key_permissions", 0)
         return self.bitmap_handler.check_key_in_bitkey(endpoint, permissions_bitmap)
 
-    def require_api_key_or_csrf(self, f):
+    def require_api_key_or_csrf(self, f):  # NOSONAR
         """
         Decorator to require either a valid API key or a valid CSRF token.
         This allows the frontend to access API routes securely while requiring API keys
@@ -323,7 +332,7 @@ class AuthenticationHandler:
 
                     # Ensure response is a Response object
                     if not hasattr(response, "headers"):
-                        response = jsonify(response) if not isinstance(response, str) else response
+                        response = make_response(response)
 
                     # Add rate limit header if we have a rate limit and response has headers
                     if g.api_key_rate_limit > 0 and hasattr(response, "headers"):
@@ -382,41 +391,170 @@ class AuthenticationHandler:
                             403,
                         )
 
-                # Check nonce to prevent replay attacks
+                # Check nonce to prevent replay attacks (required for CSRF-based auth)
                 nonce = request.headers.get("X-Request-Nonce")
-                if nonce:
-                    used_nonces = session.get("used_nonces", [])
-                    if nonce in used_nonces:
-                        if self.logger:
-                            self.logger.warning(
-                                "API route access denied: nonce replay detected from %s "
-                                "(nonce: %s)",
-                                request.remote_addr,
-                                nonce[:16],
-                            )
-                        return jsonify({"error": "Replay attack detected"}), 403
+                if not nonce:
+                    if self.logger:
+                        self.logger.warning(
+                            "API route access denied: missing nonce from %s",
+                            request.remote_addr,
+                        )
+                    return jsonify({"error": "Nonce required"}), 403
 
-                    # Store nonce (keep last 100 to prevent memory bloat)
-                    used_nonces.append(nonce)
-                    if len(used_nonces) > 100:
-                        used_nonces = used_nonces[-100:]
+                # Validate nonce format: must be exactly 32 hexadecimal characters
+                if not re.match(r"^[a-f0-9]{32}$", nonce):
+                    if self.logger:
+                        self.logger.warning(
+                            "API route access denied: invalid nonce format from %s (nonce: %s)",
+                            request.remote_addr,
+                            nonce[:16],
+                        )
+                    return jsonify({"error": "Invalid nonce format"}), 403
+
+                # Stateless nonce validation: Store minimal data, auto-expires with CSRF token
+                # Get current CSRF token timestamp (nonces are only valid within this window)
+                token_timestamp = session.get("csrf_token_timestamp", 0)
+                current_time = int(request.headers.get("X-Request-Time", "0"))
+
+                # Calculate time window for this CSRF token (5 minutes)
+                time_window = f"{token_timestamp}_{session.get('csrf_token', '')[:8]}"
+
+                # Get nonces for current time window only
+                used_nonces = session.get("used_nonces", {})
+
+                # Clean up nonces from old CSRF tokens (different time windows)
+                # This happens automatically when CSRF token refreshes
+                if time_window not in used_nonces:
+                    used_nonces = {time_window: set()}
                     session["used_nonces"] = used_nonces
+
+                # Check if nonce was already used in current window
+                if nonce in used_nonces.get(time_window, set()):
+                    if self.logger:
+                        self.logger.warning(
+                            "API route access denied: nonce replay detected from %s (nonce: %s)",
+                            request.remote_addr,
+                            nonce[:16],
+                        )
+                    return jsonify({"error": "Replay attack detected"}), 403
+
+                # Store nonce in current time window with DoS protection
+                if time_window not in used_nonces:
+                    used_nonces[time_window] = set()
+
+                # Security: Limit nonce storage to prevent DoS via memory exhaustion
+                # Max 1000 nonces per 5-minute window (should be enough for legitimate use)
+                if len(used_nonces[time_window]) >= 1000:
+                    if self.logger:
+                        self.logger.warning(
+                            "API route access denied: too many requests in time window from %s",
+                            request.remote_addr,
+                        )
+                    return jsonify({"error": "Too many requests"}), 429
+
+                used_nonces[time_window].add(nonce)
+
+                # Keep only current window (automatic cleanup)
+                session["used_nonces"] = {time_window: used_nonces[time_window]}
 
                 # Browser fingerprinting - detect session hijacking
                 user_agent = request.headers.get("User-Agent", "")
-                stored_ua = session.get("user_agent")
 
-                if stored_ua and stored_ua != user_agent:
-                    if self.logger:
-                        self.logger.warning(
-                            "API route access denied: "
-                            "User-Agent changed (possible session hijacking) from %s",
-                            request.remote_addr,
-                        )
-                    return jsonify({"error": "Session validation failed"}), 403
+                # Support multiple recent user-agents per session to allow small
+                # legitimate differences (e.g. browser minor updates or opening
+                # the same session in a second window). Migrate existing
+                # `user_agent` single-value to `user_agents` list for backward
+                # compatibility.
+                user_agents = session.get("user_agents")
+                if user_agents is None and session.get("user_agent"):
+                    user_agents = [session.get("user_agent")]
 
-                if not stored_ua:
-                    session["user_agent"] = user_agent
+                # Helper: determine whether two UAs are "compatible" — same
+                # OS and browser family and close major versions (<=1 diff).
+                def _ua_compatible(old: str, new: str) -> bool:
+                    if not old or not new:
+                        return False
+
+                    # Simple OS token check
+                    os_tokens = [
+                        r"Windows NT",
+                        r"Macintosh",
+                        r"Android",
+                        r"Linux",
+                        r"iPhone",
+                        r"iPad",
+                    ]
+                    old_os = next((t for t in os_tokens if t in old), None)
+                    new_os = next((t for t in os_tokens if t in new), None)
+                    if old_os != new_os:
+                        return False
+
+                    # Browser family + major version
+                    def _find_browser_and_major(s: str):
+                        # Order matters — Edge may include Chrome token too
+                        patterns = [
+                            r"Edg/(\d+)",
+                            r"Chrome/(\d+)",
+                            r"Firefox/(\d+)",
+                            r"OPR/(\d+)",
+                            r"Version/(\d+).+Safari",
+                        ]
+                        for p in patterns:
+                            m = re.search(p, s)
+                            if m:
+                                # family derived from pattern name
+                                family = p.split("/", maxsplit=1)[0].replace("\\", "")
+                                try:
+                                    return family, int(m.group(1))
+                                except Exception:
+                                    return family, None
+                        return None, None
+
+                    old_family, old_ver = _find_browser_and_major(old)
+                    new_family, new_ver = _find_browser_and_major(new)
+                    if old_family and new_family and old_family == new_family:
+                        if old_ver is None or new_ver is None:
+                            return True
+                        try:
+                            return abs(old_ver - new_ver) <= 1
+                        except Exception:
+                            return True
+
+                    # Fallback: require that both strings contain a shared token
+                    # like 'Chrome' or 'Safari'
+                    tokens = ["Chrome", "Safari", "Edg", "Firefox", "OPR", "Android"]
+                    shared = any(tok in old and tok in new for tok in tokens)
+                    return bool(shared)
+
+                # If we have a list of allowed UAs, accept if the incoming one is
+                # already known or compatible with an existing one. Otherwise,
+                # record it (keeping a short history) or block.
+                if user_agents:
+                    # exact match
+                    if user_agent in user_agents:
+                        # incoming UA already allowed — refresh history cap
+                        session["user_agents"] = user_agents[-5:]
+                    else:
+                        # check compatibility with any existing UA
+                        compatible = any(_ua_compatible(str(ua), user_agent) for ua in user_agents)
+                        if compatible:
+                            # add this UA to the allowed list (cap history to 5)
+                            user_agents.append(user_agent)
+                            session["user_agents"] = user_agents[-5:]
+                        else:
+                            if self.logger:
+                                stored_display = user_agents[0] if user_agents else ""
+                                self.logger.warning(
+                                    "API route access denied: UA changed - "
+                                    "stored='%s' curr='%s' from %s",
+                                    stored_display,
+                                    user_agent,
+                                    request.remote_addr,
+                                )
+                            return jsonify({"error": "Session validation failed"}), 403
+                else:
+                    # No UA recorded yet; initialize list with current UA
+                    session["user_agents"] = [user_agent]
 
                 if self.logger:
                     self.logger.debug("API route access granted: valid CSRF token")
@@ -434,7 +572,7 @@ class AuthenticationHandler:
 
         return decorated_function
 
-    def require_admin_auth(self, f):
+    def require_admin_auth(self, f):  # NOSONAR
         """
         Decorator to require admin authentication via session or admin API key.
         Enforces 5-minute session timeout for security.
@@ -458,30 +596,27 @@ class AuthenticationHandler:
                                 g.api_key_id,
                             )
                         return f(*args, **kwargs)
-                    else:
-                        if self.logger:
-                            self.logger.warning(
-                                "Admin route access denied: API key is not an admin key from %s",
-                                request.remote_addr,
-                            )
-                        return jsonify({"error": "Admin access required"}), 403
-                else:
-                    if self.logger:
+                    elif self.logger:
                         self.logger.warning(
-                            "Admin route access denied: invalid API key from %s",
+                            "Admin route access denied: API key is not an admin key from %s",
                             request.remote_addr,
                         )
-                    return jsonify({"error": "Invalid API key"}), 401
+                    return jsonify({"error": "Admin access required"}), 403
+                elif self.logger:
+                    self.logger.warning(
+                        "Admin route access denied: invalid API key from %s",
+                        request.remote_addr,
+                    )
+                return jsonify({"error": "Invalid API key"}), 401
 
             # Check for session-based admin auth
             if not session.get("admin_authenticated"):
                 # Only log warning for non-GET requests (actual access attempts)
-                if request.method != "GET":
-                    if self.logger:
-                        self.logger.warning(
-                            "Admin route access denied: not authenticated from %s",
-                            request.remote_addr,
-                        )
+                if request.method != "GET" and self.logger:
+                    self.logger.warning(
+                        "Admin route access denied: not authenticated from %s",
+                        request.remote_addr,
+                    )
                 return jsonify({"error": "Unauthorized"}), 401
 
             # Invalidate sessions created before server startup

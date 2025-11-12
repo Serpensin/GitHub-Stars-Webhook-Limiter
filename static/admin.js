@@ -1,4 +1,23 @@
 // Admin Panel JavaScript
+//
+// AUTHENTICATION ARCHITECTURE:
+// - Admin panel uses session-based authentication (cookies) for the web UI
+// - Login/logout endpoints (/admin/api/login, /admin/api/logout) are INTERNAL ONLY
+// - These routes are NOT documented in the public API (not in openapi.yaml or /docs)
+// - For programmatic API access with admin privileges, use an admin API key instead
+// - Session auth is browser-only; API keys are for scripts/tools/external access
+//
+// SECURITY RATIONALE:
+// - Session cookies: Good for web UIs (automatic, HTTP-only, SameSite protection)
+// - CSRF tokens: Prevent external API calls to login endpoint
+// - API keys: Better for APIs (CSRF-proof, stateless, granular control, cross-origin)
+// - This separation follows industry best practices
+
+// Get CSRF token from meta tag
+function getCSRFToken() {
+    const meta = document.querySelector('meta[name="csrf-token"]');
+    return meta ? meta.getAttribute('content') : null;
+}
 
 // State
 let isAuthenticated = false;
@@ -11,6 +30,12 @@ let currentTab = 'api-keys'; // Track current tab
 let currentLogFile = ''; // Track currently selected log file
 let liveViewInterval = null; // Interval for live view auto-refresh
 let availableLogFiles = []; // Store available log files
+
+// Store cleanup configuration
+window.cleanupConfig = null;
+
+// Store centralized permission configuration
+window.permissionsConfig = null;
 
 // DOM Elements
 const loginSection = document.getElementById('login-section');
@@ -26,6 +51,42 @@ let timerDisplay = null;
 let sessionTimer = null;
 let timeoutBanner = null;
 
+// Helper functions - MUST be in global scope so they can be called from anywhere
+function _permId(name) {
+    return 'perm-' + String(name).replace(/[^A-Za-z0-9_\-]/g, '-');
+}
+
+function _editPermId(name) {
+    return 'edit-perm-' + String(name).replace(/[^A-Za-z0-9_\-]/g, '-');
+}
+
+// Enable/disable the generate button depending on selected permissions
+function updateGenerateBtnState() {
+    const adminKeyCheckbox = document.getElementById('is-admin-key');
+    const generateBtn = document.getElementById('generate-key-btn');
+    
+    if (!generateBtn) return; // Guard against calling before DOM is ready
+    
+    let anyChecked = false;
+    if (adminKeyCheckbox && adminKeyCheckbox.checked) anyChecked = true;
+    if (!anyChecked && window.permissionsConfig && Array.isArray(window.permissionsConfig)) {
+        for (const perm of window.permissionsConfig) {
+            const el = document.getElementById(_permId(perm.name));
+            if (el && el.checked) { anyChecked = true; break; }
+        }
+    }
+
+    if (anyChecked) {
+        generateBtn.disabled = false;
+        generateBtn.textContent = 'Generate API Key';
+        generateBtn.title = '';
+    } else {
+        generateBtn.disabled = true;
+        generateBtn.textContent = 'Select at least one permission';
+        generateBtn.title = 'Please select at least one permission or enable admin key';
+    }
+}
+
 // Initialize
 document.addEventListener('DOMContentLoaded', () => {
     // Get timer elements after DOM is loaded
@@ -33,8 +94,20 @@ document.addEventListener('DOMContentLoaded', () => {
     sessionTimer = document.getElementById('session-timer');
     timeoutBanner = document.getElementById('timeout-banner');
     
-    // Try to load keys to check if already authenticated
-    checkAuthentication();
+    // Check authentication status from server
+    // Server tells us if there's an active admin session
+    if (window.SERVER_AUTH_STATUS === true) {
+        // User has valid session, show dashboard and load keys
+        isAuthenticated = true;
+        sessionStartTime = Date.now();
+        sessionExpiredByTimeout = false;
+        showDashboard();
+        startSessionTimer();
+        loadKeys();
+    } else {
+        // No active session, show login form
+        showLogin();
+    }
 
     // Whitelist allowed characters in key name field
     const keyNameInput = document.getElementById('key-name');
@@ -47,51 +120,27 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         });
     }
-
-    // Permission checkboxes and admin key
-    const permCheckboxIds = [
-        'perm-generate-secret',
-        'perm-repositories-add',
-        'perm-repositories-verify',
-        'perm-repositories-update',
-        'perm-repositories-delete',
-        'perm-events-list',
-        'perm-permissions-list',
-        'perm-permissions-calculate',
-        'perm-permissions-decode'
-    ];
-    const adminKeyCheckbox = document.getElementById('is-admin-key');
-    const generateBtn = document.getElementById('generate-key-btn');
-
-    function updateGenerateBtnState() {
-        const anyChecked = permCheckboxIds.some(id => document.getElementById(id).checked);
-        if (adminKeyCheckbox.checked || anyChecked) {
-            generateBtn.disabled = false;
-            generateBtn.textContent = 'Generate API Key';
-            generateBtn.title = '';
-        } else {
-            generateBtn.disabled = true;
-            generateBtn.textContent = 'Select at least one permission';
-            generateBtn.title = 'Please select at least one permission or enable admin key';
-        }
-    }
-    permCheckboxIds.forEach(id => {
-        document.getElementById(id).addEventListener('change', updateGenerateBtnState);
-    });
-    adminKeyCheckbox.addEventListener('change', updateGenerateBtnState);
-    updateGenerateBtnState();
 });
 
 // Login
 loginForm.addEventListener('submit', async (e) => {
     e.preventDefault();
     const password = document.getElementById('admin-password').value;
+    const csrfToken = getCSRFToken();
+
+    if (!csrfToken) {
+        showError('Security token missing. Please refresh the page.');
+        return;
+    }
 
     try {
         const response = await fetch('/admin/api/login', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ password })
+            credentials: 'same-origin',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ password, csrf_token: csrfToken })
         });
 
         if (response.ok) {
@@ -116,7 +165,7 @@ logoutBtn.addEventListener('click', async () => {
     try {
         await fetch('/admin/api/logout', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' }
+            credentials: 'same-origin'
         });
         sessionExpiredByTimeout = false; // User initiated logout, not a timeout
         performLogout();
@@ -139,22 +188,23 @@ addKeyForm.addEventListener('submit', async (e) => {
         permissionsBitmap = -1; // Use -1 or a special value for full access
         rate_limit = 0;
     } else {
-        // Build bitmap from checkboxes (bits 0-8 for 9 permissions)
-        if (document.getElementById('perm-generate-secret').checked) permissionsBitmap |= (1 << 0);
-        if (document.getElementById('perm-repositories-add').checked) permissionsBitmap |= (1 << 1);
-        if (document.getElementById('perm-repositories-verify').checked) permissionsBitmap |= (1 << 2);
-        if (document.getElementById('perm-repositories-update').checked) permissionsBitmap |= (1 << 3);
-        if (document.getElementById('perm-repositories-delete').checked) permissionsBitmap |= (1 << 4);
-        if (document.getElementById('perm-events-list').checked) permissionsBitmap |= (1 << 5);
-        if (document.getElementById('perm-permissions-list').checked) permissionsBitmap |= (1 << 6);
-        if (document.getElementById('perm-permissions-calculate').checked) permissionsBitmap |= (1 << 7);
-        if (document.getElementById('perm-permissions-decode').checked) permissionsBitmap |= (1 << 8);
+        // Build bitmap from dynamically-rendered permission checkboxes
+        if (window.permissionsConfig && Array.isArray(window.permissionsConfig)) {
+            for (const perm of window.permissionsConfig) {
+                const el = document.getElementById(_permId(perm.name));
+                if (el && el.checked) {
+                    // perm.value comes from server and should be numeric
+                    permissionsBitmap |= Number(perm.value);
+                }
+            }
+        }
         rate_limit = parseInt(document.getElementById('key-rate-limit').value);
     }
 
     try {
         const response = await fetch('/admin/api/keys', {
             method: 'POST',
+            credentials: 'same-origin',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ name, permissions: permissionsBitmap, rate_limit, is_admin_key: isAdminKey })
         });
@@ -173,6 +223,7 @@ addKeyForm.addEventListener('submit', async (e) => {
             document.getElementById('perm-permissions-list').checked = false;
             document.getElementById('perm-permissions-calculate').checked = false;
             document.getElementById('perm-permissions-decode').checked = false;
+            document.getElementById('perm-stats').checked = false;
             document.getElementById('key-rate-limit').value = '100';
             toggleAdminKeyOptions(); // Reset visibility
             resetSessionTimer(); // Reset timer on successful API call
@@ -215,7 +266,7 @@ function toggleAdminKeyOptions() {
 async function checkAuthentication() {
     // Try to load keys to check if session is still valid
     try {
-        const response = await fetch('/admin/api/keys');
+    const response = await fetch('/admin/api/keys', { credentials: 'same-origin' });
         if (response.ok) {
             // Session is still valid, show dashboard
             isAuthenticated = true;
@@ -223,6 +274,9 @@ async function checkAuthentication() {
             sessionExpiredByTimeout = false;
             showDashboard();
             startSessionTimer();
+            // Fetch configs first, then render keys
+            await fetchCleanupConfig();
+            await fetchPermissionsConfig();
             const data = await response.json();
             renderKeys(data.keys);
         } else {
@@ -239,7 +293,15 @@ async function checkAuthentication() {
 // Load Keys
 async function loadKeys() {
     try {
-        const response = await fetch('/admin/api/keys');
+        // Fetch configs first if not already loaded
+        if (!window.cleanupConfig) {
+            await fetchCleanupConfig();
+        }
+        if (!window.permissionsConfig) {
+            await fetchPermissionsConfig();
+        }
+        
+    const response = await fetch('/admin/api/keys', { credentials: 'same-origin' });
         if (response.ok) {
             const data = await response.json();
             renderKeys(data.keys);
@@ -263,6 +325,106 @@ async function loadKeys() {
         keysList.innerHTML = '<p class="error-message">Failed to load API keys</p>';
         console.error('Load keys error:', error);
     }
+}
+
+// Fetch cleanup configuration from API
+async function fetchCleanupConfig() {
+    try {
+        const response = await fetch('/api/stats');
+        if (response.ok) {
+            const data = await response.json();
+            if (data.cleanup_config) {
+                window.cleanupConfig = data.cleanup_config;
+                console.log('Cleanup config loaded:', window.cleanupConfig);
+                // Re-render keys if they're already displayed to update deletion dates
+                const currentKeys = keysList.querySelectorAll('tbody tr');
+                if (currentKeys.length > 0) {
+                    loadKeys(); // Reload to update deletion dates
+                }
+            } else {
+                console.warn('No cleanup_config in response:', data);
+            }
+        } else {
+            console.error('Failed to fetch cleanup config:', response.status, response.statusText);
+        }
+    } catch (error) {
+        console.error('Could not fetch cleanup config:', error);
+    }
+}
+
+// Fetch permissions configuration from API
+async function fetchPermissionsConfig() {
+    try {
+    const response = await fetch('/admin/api/permissions', { credentials: 'same-origin' });
+        if (response.ok) {
+            const data = await response.json();
+            if (data.permissions) {
+                window.permissionsConfig = data.permissions;
+                console.log('Permissions config loaded:', window.permissionsConfig);
+                // Render the permission checkboxes dynamically now that we have config
+                renderPermissionCheckboxes();
+            } else {
+                console.warn('No permissions in response:', data);
+            }
+        } else {
+            console.error('Failed to fetch permissions config:', response.status, response.statusText);
+        }
+    } catch (error) {
+        console.error('Could not fetch permissions config:', error);
+    }
+}
+
+// Render permission checkboxes for both the add-key form and edit modal
+function renderPermissionCheckboxes() {
+    if (!window.permissionsConfig || !Array.isArray(window.permissionsConfig)) return;
+    const container = document.getElementById('permissions-container');
+    const editContainer = document.getElementById('edit-permissions-container');
+    if (!container || !editContainer) return;
+
+    container.innerHTML = '';
+    editContainer.innerHTML = '';
+
+    for (const perm of window.permissionsConfig) {
+        const id = _permId(perm.name);
+        const editId = _editPermId(perm.name);
+
+        // Add checkbox for add-key form
+        const label = document.createElement('label');
+        label.className = 'permission-checkbox';
+        label.title = perm.description || '';
+
+        const input = document.createElement('input');
+        input.type = 'checkbox';
+        input.id = id;
+        input.dataset.permValue = String(perm.value);
+        label.appendChild(input);
+
+        const span = document.createElement('span');
+        span.textContent = perm.friendly_name || perm.name;
+        label.appendChild(span);
+
+        container.appendChild(label);
+
+        // Add checkbox for edit modal
+        const editLabel = label.cloneNode(true);
+        const editInput = editLabel.querySelector('input');
+        editInput.id = editId;
+        editContainer.appendChild(editLabel);
+
+        // Wire change events to update generate button state
+        input.addEventListener('change', updateGenerateBtnState);
+        editInput.addEventListener('change', () => {}); // placeholder if needed later
+    }
+
+    // Ensure admin checkbox also updates the button state
+    const adminKeyCheckbox = document.getElementById('is-admin-key');
+    if (adminKeyCheckbox) {
+        // Remove any existing listeners to avoid duplicates
+        adminKeyCheckbox.removeEventListener('change', updateGenerateBtnState);
+        adminKeyCheckbox.addEventListener('change', updateGenerateBtnState);
+    }
+    // initial state
+    updateGenerateBtnState();
 }
 
 // Render Keys
@@ -293,6 +455,7 @@ function renderKeys(keys) {
             <th class="col-rate">Rate Limit</th>
             <th class="col-created">Created</th>
             <th class="col-used">Last Used</th>
+            <th class="col-deletion">Deletion Date</th>
             <th class="col-actions">Actions</th>
         </tr>
     `;
@@ -342,18 +505,12 @@ function renderKeys(keys) {
         tdPerms.className = 'col-permissions';
         if (isAdminKey || permissionsBitmap === -1) {
             tdPerms.innerHTML = '<span class="perm-full-access">FULL ACCESS</span>';
-        } else {
-            const permFullNames = [
-                'Generate Secret',
-                'Add Repository',
-                'Verify Repository',
-                'Update Repository',
-                'Delete Repository'
-            ];
+        } else if (window.permissionsConfig) {
+            // Use centralized permission configuration
             let enabled = [];
-            for (let i = 0; i < permFullNames.length; i++) {
-                if ((permissionsBitmap & (1 << i)) !== 0) {
-                    enabled.push(permFullNames[i]);
+            for (const perm of window.permissionsConfig) {
+                if ((permissionsBitmap & perm.value) !== 0) {
+                    enabled.push(perm.friendly_name);
                 }
             }
             if (enabled.length === 0) {
@@ -369,6 +526,9 @@ function renderKeys(keys) {
                 });
                 tdPerms.appendChild(permsDiv);
             }
+        } else {
+            // Fallback if permissions config not loaded yet
+            tdPerms.innerHTML = '<span class="text-muted">Loading...</span>';
         }
         tr.appendChild(tdPerms);
         
@@ -396,6 +556,29 @@ function renderKeys(keys) {
             tdUsed.innerHTML = '<span class="text-muted">Never</span>';
         }
         tr.appendChild(tdUsed);
+        
+        // Deletion date column (only for non-admin keys)
+        const tdDeletion = document.createElement('td');
+        tdDeletion.className = 'col-deletion';
+        if (isAdminKey) {
+            tdDeletion.innerHTML = '<span class="text-muted">Never</span>';
+        } else if (window.cleanupConfig && window.cleanupConfig.api_keys_inactive_days) {
+            // Use last_used if available, otherwise use created_at
+            const baseTimestamp = key.last_used || key.created_at;
+            if (baseTimestamp) {
+                // Convert ISO string to Date, add days, then format
+                const baseDate = new Date(baseTimestamp);
+                const deletionDate = new Date(baseDate.getTime() + (window.cleanupConfig.api_keys_inactive_days * 86400 * 1000));
+                tdDeletion.textContent = formatDate(deletionDate.toISOString());
+            } else {
+                // This should never happen since created_at is always set
+                tdDeletion.innerHTML = '<span class="text-muted">Unknown</span>';
+            }
+        } else {
+            // Config not loaded yet - will be updated once config arrives
+            tdDeletion.innerHTML = '<span class="text-muted">Loading...</span>';
+        }
+        tr.appendChild(tdDeletion);
         
         // Actions column
         const tdActions = document.createElement('td');
@@ -442,8 +625,14 @@ function renderKeys(keys) {
     });
     
     table.appendChild(tbody);
+    
+    // Create wrapper for responsive scrolling
+    const wrapper = document.createElement('div');
+    wrapper.className = 'keys-table-wrapper';
+    wrapper.appendChild(table);
+    
     keysList.innerHTML = '';
-    keysList.appendChild(table);
+    keysList.appendChild(wrapper);
     updateBulkActions();
 }
 
@@ -452,9 +641,10 @@ async function toggleKey(keyId) {
     try {
         const response = await fetch(`/admin/api/keys/${keyId}/toggle`, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' }
+            credentials: 'same-origin',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({})
         });
-
         if (response.ok) {
             resetSessionTimer(); // Reset timer on successful API call
             loadKeys();
@@ -486,7 +676,7 @@ async function deleteKey(keyId, keyName) {
     try {
         const response = await fetch(`/admin/api/keys/${keyId}`, {
             method: 'DELETE',
-            headers: { 'Content-Type': 'application/json' }
+            credentials: 'same-origin'
         });
 
         if (response.ok) {
@@ -537,16 +727,16 @@ function showGeneratedKey(apiKey, permissions, rateLimit, isAdminKey) {
         adminSpan.textContent = 'FULL ACCESS (Admin Key)';
         infoText.appendChild(adminSpan);
     } else {
-        const permNames = [
-            'Generate-Secret',
-            'Add Repository',
-            'Verify Repository',
-            'Update Repository',
-            'Delete Repository'
-        ];
+        // Use the server-provided permission list to translate bitmap to names
         let enabled = [];
-        for (let i = 0; i < permNames.length; i++) {
-            if ((permissions & (1 << i)) !== 0) enabled.push(permNames[i]);
+        if (window.permissionsConfig && Array.isArray(window.permissionsConfig)) {
+            for (const perm of window.permissionsConfig) {
+                try {
+                    if ((permissions & Number(perm.value)) !== 0) enabled.push(perm.friendly_name || perm.name);
+                } catch (e) {
+                    // ignore parsing errors
+                }
+            }
         }
         infoText.appendChild(document.createTextNode(enabled.length ? enabled.join(', ') : 'No Access'));
     }
@@ -789,16 +979,19 @@ async function bulkAction(action) {
 // Edit Key
 function editKey(keyId, permissions, rateLimit) {
     document.getElementById('edit-key-id').value = keyId;
-    // Set checkboxes based on bitmap (bits 0-8 for 9 permissions)
-    document.getElementById('edit-perm-generate-secret').checked = (permissions & (1 << 0)) !== 0;
-    document.getElementById('edit-perm-repositories-add').checked = (permissions & (1 << 1)) !== 0;
-    document.getElementById('edit-perm-repositories-verify').checked = (permissions & (1 << 2)) !== 0;
-    document.getElementById('edit-perm-repositories-update').checked = (permissions & (1 << 3)) !== 0;
-    document.getElementById('edit-perm-repositories-delete').checked = (permissions & (1 << 4)) !== 0;
-    document.getElementById('edit-perm-events-list').checked = (permissions & (1 << 5)) !== 0;
-    document.getElementById('edit-perm-permissions-list').checked = (permissions & (1 << 6)) !== 0;
-    document.getElementById('edit-perm-permissions-calculate').checked = (permissions & (1 << 7)) !== 0;
-    document.getElementById('edit-perm-permissions-decode').checked = (permissions & (1 << 8)) !== 0;
+    // Set dynamically-rendered edit modal checkboxes based on bitmap
+    if (window.permissionsConfig && Array.isArray(window.permissionsConfig)) {
+        for (const perm of window.permissionsConfig) {
+            const el = document.getElementById(_editPermId(perm.name));
+            if (el) {
+                try {
+                    el.checked = (permissions & Number(perm.value)) !== 0;
+                } catch (e) {
+                    el.checked = false;
+                }
+            }
+        }
+    }
     document.getElementById('edit-key-rate-limit').value = rateLimit;
     document.getElementById('edit-key-modal').style.display = 'block';
 }
@@ -813,17 +1006,16 @@ document.getElementById('edit-key-form').addEventListener('submit', async (e) =>
     
     const keyId = document.getElementById('edit-key-id').value;
     
-    // Build bitmap from checkboxes (bits 0-8 for 9 permissions)
+    // Build bitmap from checkboxes (bits 0-9 for 10 permissions)
     let permissionsBitmap = 0;
-    if (document.getElementById('edit-perm-generate-secret').checked) permissionsBitmap |= (1 << 0);
-    if (document.getElementById('edit-perm-repositories-add').checked) permissionsBitmap |= (1 << 1);
-    if (document.getElementById('edit-perm-repositories-verify').checked) permissionsBitmap |= (1 << 2);
-    if (document.getElementById('edit-perm-repositories-update').checked) permissionsBitmap |= (1 << 3);
-    if (document.getElementById('edit-perm-repositories-delete').checked) permissionsBitmap |= (1 << 4);
-    if (document.getElementById('edit-perm-events-list').checked) permissionsBitmap |= (1 << 5);
-    if (document.getElementById('edit-perm-permissions-list').checked) permissionsBitmap |= (1 << 6);
-    if (document.getElementById('edit-perm-permissions-calculate').checked) permissionsBitmap |= (1 << 7);
-    if (document.getElementById('edit-perm-permissions-decode').checked) permissionsBitmap |= (1 << 8);
+    if (window.permissionsConfig && Array.isArray(window.permissionsConfig)) {
+        for (const perm of window.permissionsConfig) {
+            const el = document.getElementById(_editPermId(perm.name));
+            if (el && el.checked) {
+                permissionsBitmap |= Number(perm.value);
+            }
+        }
+    }
     
     // Validate that at least one permission is selected
     if (permissionsBitmap === 0) {
