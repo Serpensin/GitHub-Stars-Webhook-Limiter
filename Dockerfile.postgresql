@@ -1,5 +1,5 @@
 # Builder stage
-FROM python:3.13-alpine AS builder
+FROM python:3.11-alpine AS builder
 
 WORKDIR /app
 
@@ -22,7 +22,7 @@ RUN python -m pip install --upgrade pip && \
         gunicorn gevent greenlet
 
 # Final stage
-FROM python:3.13-alpine
+FROM python:3.11-alpine
 
 WORKDIR /app
 
