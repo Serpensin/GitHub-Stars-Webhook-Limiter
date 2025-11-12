@@ -4,7 +4,7 @@ FROM python:3.11-alpine AS builder
 WORKDIR /app
 
 # Install build dependencies
-RUN apk add --no-cache build-base cargo libffi-dev linux-headers openssl-dev rust
+RUN apk add --no-cache build-base cargo gcc libc-dev libffi-dev linux-headers musl-dev openssl-dev rust
 
 # Copy and install Python dependencies
 COPY requirements.txt .

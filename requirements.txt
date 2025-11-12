@@ -1,9 +1,10 @@
 
+
 Flask
 python-dotenv
 requests
 sentry-sdk
-cryptography==40.0.7
+cryptography==39.0.2
 colorama
 argon2-cffi
 CustomModules[loghandler,databasehandler,bitmaphandler]
