@@ -35,18 +35,11 @@ COPY static/ ./static/
 COPY modules/ ./modules/
 
 # Copy License and README
+
+
 COPY LICENSE.txt .
 COPY README.md .
 
-# Remove build dependencies and keep only runtime deps (plus PostgreSQL runtime)
-RUN apk del build-base linux-headers rust cargo postgresql-dev && apk add --no-cache \
-    curl \
-    libpq \
-    libstdc++ \
-    postgresql \
-    postgresql-client \
-    postgresql-contrib \
-    su-exec
 
 # Copy installed Python packages from builder
 COPY --from=builder /install /usr/local

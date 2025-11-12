@@ -28,11 +28,9 @@ COPY static/ ./static/
 COPY modules/ ./modules/
 
 # Copy License and README
+
 COPY LICENSE.txt .
 COPY README.md .
-
-# Remove build dependencies and keep only runtime deps
-RUN apk del build-base linux-headers rust cargo && apk add --no-cache curl libstdc++
 
 # Copy installed Python packages from builder
 COPY --from=builder /install /usr/local
