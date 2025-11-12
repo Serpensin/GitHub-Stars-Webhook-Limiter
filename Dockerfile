@@ -10,7 +10,7 @@ RUN apk add --no-cache build-base cargo libffi-dev linux-headers openssl-dev rus
 COPY requirements.txt .
 RUN python -m pip install --upgrade pip && \
     pip install --upgrade setuptools wheel && \
-    PIP_ONLY_BINARY=cryptography pip install --prefix=/install --no-warn-script-location \
+    pip install --prefix=/install --no-warn-script-location \
         -r requirements.txt \
         gunicorn gevent greenlet
 
