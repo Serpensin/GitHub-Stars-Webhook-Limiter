@@ -17,13 +17,13 @@ import secrets
 import sys
 
 try:
-    from argon2 import PasswordHasher
+    from argon2 import PasswordHasher, exceptions as argon2_exceptions
 except ImportError:
     print("[!] argon2-cffi not found, installing...")
     import subprocess
 
     subprocess.check_call([sys.executable, "-m", "pip", "install", "argon2-cffi"])
-    from argon2 import PasswordHasher
+    from argon2 import PasswordHasher, exceptions as argon2_exceptions
 try:
     from cryptography.fernet import Fernet
 except ImportError:
@@ -43,6 +43,8 @@ except ImportError:
 
 # Load .env file (won't override existing environment variables)
 load_dotenv()
+
+ph = PasswordHasher()
 
 # Placeholder values that should NOT be used in production
 INVALID_PLACEHOLDERS = {
@@ -65,25 +67,15 @@ INVALID_PLACEHOLDERS = {
 
 
 def validate_argon2_hash(hash_string: str) -> bool:
-    """
-    Validate that a string is a valid Argon2 hash.
-
-    Args:
-        hash_string: The hash string to validate
-
-    Returns:
-        True if valid Argon2 hash, False otherwise
-    """
-    if not hash_string:
-        return False
-
-    # Check format: $argon2id$v=19$m=...,t=...,p=...$...$...
-    pattern = r"^\$argon2id?\$v=\d+\$m=\d+,t=\d+,p=\d+\$[A-Za-z0-9+/]+\$[A-Za-z0-9+/]+$"
-    if not re.match(pattern, hash_string):
-        return False
-
-    # Additional validation: verify it starts with correct prefix
-    return hash_string.startswith("$argon2")
+    try:
+        ph.verify(hash_string, "dummy_password")
+    except argon2_exceptions.VerifyMismatchError:
+        return True  # valid hash, just wrong password
+    except argon2_exceptions.InvalidHashError:
+        return False  # invalid format
+    except argon2_exceptions.VerificationError:
+        return False  # corrupted or invalid internal structure
+    return True
 
 
 def check_required_env_vars():  # NOSONAR
@@ -166,7 +158,6 @@ def generate_all_secrets():
         print("\n[!] Warning: Password is less than 8 characters.")
         print("    Consider using a stronger password for better security.")
 
-    ph = PasswordHasher()
     password_hash = ph.hash(password)
     print("[*] Generated ADMIN_PASSWORD_HASH (Argon2id)")
 
@@ -184,6 +175,7 @@ def generate_all_secrets():
     print(f"      ENCRYPTION_KEY: {encryption_key}")
     print(f"      FLASK_SECRET_KEY: {flask_secret}")
     print(f"      ADMIN_PASSWORD_HASH: {password_hash}")
+    print(f"      ADMIN_PASSWORD_HASH: {password_hash.replace('$', '$$')}  # Escape $ for Docker Compose")
 
     print("\n" + "=" * 70)
     print("[!] IMPORTANT SECURITY NOTES:")
