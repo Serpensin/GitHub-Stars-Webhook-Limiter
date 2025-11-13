@@ -14,7 +14,7 @@ load_dotenv()
 
 # Application metadata
 APP_NAME = "GitHub_Events_Limiter"
-APP_VERSION = "2.0.2"
+APP_VERSION = "2.0.3"
 
 # Paths
 LOG_FOLDER = os.path.join(APP_NAME, "logs")

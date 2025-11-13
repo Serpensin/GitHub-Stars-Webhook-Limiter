@@ -4,7 +4,7 @@ FROM python:3.11-alpine AS builder
 WORKDIR /app
 
 # Install build dependencies
-RUN apk add --no-cache build-base cargo gcc libc-dev libffi-dev linux-headers musl-dev openssl-dev rust
+RUN apk add --no-cache build-base cargo curl gcc libc-dev libffi-dev linux-headers musl-dev openssl-dev rust
 
 # Copy and install Python dependencies
 COPY requirements-sqlite.txt .
@@ -48,7 +48,7 @@ LABEL maintainer="Discord: pika.pika.no.mi (970119359840284743)"
 LABEL commit=$COMMIT
 LABEL description="Listens for GitHub star & watch events, notifies Discord on first-time interactions, with SQLite & Sentry support."
 LABEL release=$BUILD_DATE
-LABEL VERSION="2.0.2"
+LABEL VERSION="2.0.3"
 LABEL url="https://github.com/Serpensin/GitHub-Stars-Webhook-Limiter"
 
 CMD ["gunicorn", "-c", ".config/gunicorn.conf.py", "main:app"]
