@@ -14,7 +14,6 @@ Main features:
 """
 
 import os
-import re
 import secrets
 import signal
 import sqlite3
@@ -22,7 +21,7 @@ import sys
 import time
 
 import sentry_sdk
-from argon2 import PasswordHasher
+from argon2 import PasswordHasher, exceptions as argon2_exceptions
 from cryptography.fernet import Fernet
 from dotenv import load_dotenv
 from flask import Flask, g, render_template, request, send_from_directory, session
@@ -58,6 +57,9 @@ load_dotenv()
 os.makedirs(config.LOG_FOLDER, exist_ok=True)
 log_manager = LogManager(config.LOG_FOLDER, config.APP_NAME, config.LOG_LEVEL)
 logger = log_manager.get_logger(__name__)
+
+# Initialize password hasher for API keys and admin auth
+ph = PasswordHasher()
 
 
 # ============================================================================
@@ -168,25 +170,13 @@ class PostgreSQLConnectionWrapper:
 
 
 def validate_argon2_hash(hash_string: str) -> bool:
-    """
-    Validate that a string is a valid Argon2 hash.
-
-    Args:
-        hash_string: The hash string to validate
-
-    Returns:
-        True if valid Argon2 hash, False otherwise
-    """
-    if not hash_string:
+    try:
+        ph.verify(hash_string, "Test123")
+        return True
+    except argon2_exceptions.VerifyMismatchError:
+        return True
+    except argon2_exceptions.InvalidHashError:
         return False
-
-    # Check format: $argon2id$v=19$m=...,t=...,p=...$...$...
-    pattern = r"^\$argon2id?\$v=\d+\$m=\d+,t=\d+,p=\d+\$[A-Za-z0-9+/]+\$[A-Za-z0-9+/]+$"
-    if not re.match(pattern, hash_string):
-        return False
-
-    # Additional validation: verify it starts with correct prefix
-    return hash_string.startswith("$argon2")
 
 
 # Check for required environment variables and validate them
@@ -269,9 +259,6 @@ logger.info("Admin password hash loaded from environment")
 
 # At this point ADMIN_PASSWORD_HASH is guaranteed to be non-None due to validation above
 assert ADMIN_PASSWORD_HASH is not None, "ADMIN_PASSWORD_HASH should have been validated"
-
-# Initialize password hasher for API keys and admin auth
-ph = PasswordHasher()
 
 # Initialize Sentry SDK for error monitoring and performance tracing
 sentry_dsn = os.environ.get("SENTRY_DSN")

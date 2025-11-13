@@ -48,7 +48,7 @@ LABEL maintainer="Discord: pika.pika.no.mi (970119359840284743)"
 LABEL commit=$COMMIT
 LABEL description="Listens for GitHub star & watch events, notifies Discord on first-time interactions, with SQLite & Sentry support."
 LABEL release=$BUILD_DATE
-LABEL VERSION="2.0.0"
+LABEL VERSION="2.0.1"
 LABEL url="https://github.com/Serpensin/GitHub-Stars-Webhook-Limiter"
 
 CMD ["gunicorn", "-c", ".config/gunicorn.conf.py", "main:app"]
