@@ -70,7 +70,7 @@ LABEL maintainer="Discord: pika.pika.no.mi (970119359840284743)"
 LABEL commit=$COMMIT
 LABEL description="Listens for GitHub star & watch events, notifies Discord on first-time interactions, with embedded PostgreSQL & Sentry support."
 LABEL release=$BUILD_DATE
-LABEL VERSION="2.0.1"
+LABEL VERSION="2.0.2"
 LABEL url="https://github.com/Serpensin/GitHub-Stars-Webhook-Limiter"
 
 ENTRYPOINT ["/usr/local/bin/docker-entrypoint-postgresql.sh"]

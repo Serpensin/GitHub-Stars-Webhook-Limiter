@@ -420,13 +420,25 @@ class AuthenticationHandler:
                 time_window = f"{token_timestamp}_{session.get('csrf_token', '')[:8]}"
 
                 # Get nonces for current time window only
-                used_nonces = session.get("used_nonces", {})
+                # Convert lists back to sets for efficient membership testing
+                # Handle both old (set) and new (list) formats for backward compatibility
+                used_nonces_raw = session.get("used_nonces", {})
+                used_nonces = {}
+                for k, v in used_nonces_raw.items():
+                    if isinstance(v, set):
+                        # Old format (before fix) - already a set
+                        used_nonces[k] = v
+                    elif isinstance(v, list):
+                        # New format - convert list to set
+                        used_nonces[k] = set(v)
+                    else:
+                        # Unknown format - skip
+                        continue
 
                 # Clean up nonces from old CSRF tokens (different time windows)
                 # This happens automatically when CSRF token refreshes
                 if time_window not in used_nonces:
                     used_nonces = {time_window: set()}
-                    session["used_nonces"] = used_nonces
 
                 # Check if nonce was already used in current window
                 if nonce in used_nonces.get(time_window, set()):
@@ -455,7 +467,8 @@ class AuthenticationHandler:
                 used_nonces[time_window].add(nonce)
 
                 # Keep only current window (automatic cleanup)
-                session["used_nonces"] = {time_window: used_nonces[time_window]}
+                # Convert set to list for JSON serialization in session
+                session["used_nonces"] = {time_window: list(used_nonces[time_window])}
 
                 # Browser fingerprinting - detect session hijacking
                 user_agent = request.headers.get("User-Agent", "")
@@ -558,6 +571,11 @@ class AuthenticationHandler:
 
                 if self.logger:
                     self.logger.debug("API route access granted: valid CSRF token")
+                
+                # Mark this request as CSRF-authenticated (not API key)
+                # This allows permission checks to bypass for web UI requests
+                g.is_csrf_auth = True
+                
                 return f(*args, **kwargs)
 
             if self.logger:

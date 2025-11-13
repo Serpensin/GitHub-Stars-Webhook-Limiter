@@ -109,7 +109,14 @@ def check_permission(permission_name: str):
         tuple: (error_response, status_code) if permission denied, None if allowed
     """
     # CSRF tokens bypass permission checks (only used by authenticated web UI)
+    # Check if this request is CSRF-authenticated (from frontend)
+    if getattr(g, "is_csrf_auth", False):
+        return None
+    
+    # API key authentication requires permission checks
+    # Check if this is an API key request by verifying if api_key_id was set
     if not hasattr(g, "api_key_id"):
+        # No authentication at all - this shouldn't happen as decorator should block
         return None
 
     # Admin keys have all permissions

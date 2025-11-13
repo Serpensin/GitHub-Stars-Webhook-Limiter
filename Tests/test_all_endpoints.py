@@ -16,7 +16,7 @@ import time
 BASE_URL = "http://localhost:5000"
 # NOTE: This is a TEST-ONLY placeholder API key for local development
 # In production, use environment variables and never commit real keys
-ADMIN_API_KEY = "9HZ7wknntLZXEzGYyRrpZYPoySwv5jTm3r4odOuZmVI"  # Replace with actual admin API key
+ADMIN_API_KEY = ""  # Replace with actual admin API key
 # ============================================================================
 
 

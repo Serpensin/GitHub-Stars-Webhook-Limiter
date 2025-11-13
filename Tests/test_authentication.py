@@ -65,13 +65,24 @@ class TestAuthentication(unittest.TestCase):
 
         self.__class__.session = requests.Session()
 
+        # First, visit the admin page to get a CSRF token in the session
+        print("Fetching admin page to get CSRF token...")
+        admin_page = self.__class__.session.get(f"{self.base_url}/admin")
+        self.assertEqual(admin_page.status_code, 200, "Admin page should be accessible")
+        
+        # Extract CSRF token from the meta tag in the page
+        csrf_match = re.search(r'<meta name="csrf-token" content="([^"]+)"', admin_page.text)
+        self.assertIsNotNone(csrf_match, "CSRF token should be present in admin page")
+        csrf_token = csrf_match.group(1)
+        print(f"Got CSRF token: {csrf_token[:20]}...")
+
         headers = {"Content-Type": "application/json"}
         if self.__class__.internal_secret:
             headers["X-Internal-Secret"] = self.__class__.internal_secret
 
         response = self.__class__.session.post(
             f"{self.base_url}/admin/api/login",
-            json={"password": self.admin_password},
+            json={"password": self.admin_password, "csrf_token": csrf_token},
             headers=headers
         )
         print(f"Login Status: {response.status_code}")
