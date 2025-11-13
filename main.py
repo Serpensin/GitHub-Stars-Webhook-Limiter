@@ -171,12 +171,14 @@ class PostgreSQLConnectionWrapper:
 
 def validate_argon2_hash(hash_string: str) -> bool:
     try:
-        ph.verify(hash_string, "Test123")
-        return True
+        ph.verify(hash_string, "dummy_password")
     except argon2_exceptions.VerifyMismatchError:
-        return True
+        return True  # valid hash, just wrong password
     except argon2_exceptions.InvalidHashError:
-        return False
+        return False  # invalid format
+    except argon2_exceptions.VerificationError:
+        return False  # corrupted or invalid internal structure
+    return True
 
 
 # Check for required environment variables and validate them
