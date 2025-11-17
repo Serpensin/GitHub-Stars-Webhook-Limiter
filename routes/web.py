@@ -106,7 +106,7 @@ def index():
 
         if logger:
             logger.debug(f"Web interface accessed from {request.remote_addr}")
-        return render_template("index.html", csrf_token=session["csrf_token"])
+        return render_template("index.html", csrf_token=session["csrf_token"], app_version=config.APP_VERSION)
     except Exception as e:  # pylint: disable=broad-exception-caught
         if logger:
             logger.error(f"Error serving frontend: {e}")
@@ -199,7 +199,7 @@ def health():
 @web_bp.route("/docs")
 def docs():
     """API documentation page (Redoc UI)"""
-    return render_template("docs.html")
+    return render_template("docs.html", app_version=config.APP_VERSION)
 
 
 @web_bp.route("/stats")
@@ -221,7 +221,7 @@ def stats_page():
 
         if logger:
             logger.debug(f"Stats page accessed from {request.remote_addr}")
-        return render_template("stats.html", csrf_token=session["csrf_token"])
+        return render_template("stats.html", csrf_token=session["csrf_token"], app_version=config.APP_VERSION)
     except Exception as e:  # pylint: disable=broad-exception-caught
         if logger:
             logger.error(f"Error serving stats page: {e}")
@@ -234,7 +234,7 @@ def try_api():
     Interactive API testing page (Swagger UI).
     Allows testing API endpoints with authentication.
     """
-    return render_template("swagger.html")
+    return render_template("swagger.html", app_version=config.APP_VERSION)
 
 
 @web_bp.route("/spec")

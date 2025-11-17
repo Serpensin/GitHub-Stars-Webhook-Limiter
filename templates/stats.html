@@ -7,11 +7,11 @@
     <title>GitHub Stars Webhook Limiter - Statistics</title>
     <link rel="icon" type="image/svg+xml" href="/favicon.ico">
     <link rel="stylesheet" href="/static/style.css">
-    <script>
+    <script type="text/javascript">
         // CSRF token for API authentication
         // Sanitized to prevent XSS via Jinja2 escaping
         globalThis.CSRF_TOKEN = {{ csrf_token | tojson }};
-        
+
         // Generate a cryptographically secure random nonce for replay protection
         function generateNonce() {
             const array = new Uint32Array(4);
@@ -370,7 +370,7 @@
     </script>
 
     <footer>
-    <p>GitHub Events Limiter v2.0.0 | <a href="https://github.com/Serpensin/GitHub-Stars-Webhook-Limiter" target="_blank" rel="noopener noreferrer">Source Code</a> | <a href="/">Home</a></p>
+    <p>GitHub Events Limiter v{{ app_version }} | <a href="https://github.com/Serpensin/GitHub-Stars-Webhook-Limiter" target="_blank" rel="noopener noreferrer">Source Code</a> | <a href="/">Home</a></p>
     </footer>
     </div>
 </body>

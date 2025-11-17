@@ -144,12 +144,26 @@ def main() -> int:
         print(f"OpenAPI spec not found at {openapi_path}")
         return 3
 
-    permissions = load_config(config_path)
+    # Load config.py as module to get permissions and version
+    spec_mod = importlib.util.spec_from_file_location("project_config", str(config_path))
+    if spec_mod is None or spec_mod.loader is None:
+        raise SystemExit(f"Unable to load config module from {config_path}")
+    config_module = importlib.util.module_from_spec(spec_mod)
+    spec_mod.loader.exec_module(config_module)  # type: ignore
+    if not hasattr(config_module, "PERMISSIONS"):
+        raise SystemExit("config.py does not define PERMISSIONS")
+    permissions = getattr(config_module, "PERMISSIONS")
+    app_version = getattr(config_module, "APP_VERSION", None)
     total, max_value, example_perms = compute_permission_metadata(permissions)
 
     # Read YAML
     text = openapi_path.read_text(encoding="utf-8")
     spec = yaml.safe_load(text)
+
+    # Set OpenAPI version from config.py
+    if app_version:
+        if "info" in spec:
+            spec["info"]["version"] = str(app_version)
 
     # Update APIKey schema description
     update_api_key_schema(spec, permissions)

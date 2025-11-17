@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: GitHub Stars Webhook Limiter API
-  version: 2.4.0
+  version: 1.4.0
   description: 'A Flask application that listens for GitHub webhook events (star/watch),
     validates them,
 
