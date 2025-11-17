@@ -1002,12 +1002,18 @@ def api_get_stats():
         db = get_db()
         current_repos = db.execute("SELECT COUNT(*) as count FROM repositories").fetchone()["count"]
         current_api_keys = db.execute("SELECT COUNT(*) as count FROM api_keys").fetchone()["count"]
+        
+        # Count active API keys and admin keys
+        active_api_keys = db.execute("SELECT COUNT(*) as count FROM api_keys WHERE is_active = 1").fetchone()["count"]
+        admin_api_keys = db.execute("SELECT COUNT(*) as count FROM api_keys WHERE is_admin_key = 1").fetchone()["count"]
 
         # Organize stats into categories
         response = {
             "totals": {
                 "repositories_current": current_repos,
                 "api_keys_current": current_api_keys,
+                "api_keys_active": active_api_keys,
+                "api_keys_admin": admin_api_keys,
                 "repositories_ever_added": all_stats.get("total_repositories", 0),
                 "api_keys_ever_created": all_stats.get("total_api_keys", 0),
                 "discord_messages_sent": all_stats.get("total_discord_messages", 0),

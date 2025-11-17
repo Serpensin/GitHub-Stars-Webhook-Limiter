@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: GitHub Stars Webhook Limiter API
-  version: 2.0.0
+  version: 1.4.0
   description: 'A Flask application that listens for GitHub webhook events (star/watch),
     validates them,
 
@@ -1052,8 +1052,16 @@ paths:
                         example: 42
                       api_keys_current:
                         type: integer
-                        description: Number of API keys currently active
+                        description: Total number of API keys currently in the system
                         example: 15
+                      api_keys_active:
+                        type: integer
+                        description: Number of API keys currently active (is_active = true)
+                        example: 12
+                      api_keys_admin:
+                        type: integer
+                        description: Number of admin API keys (with full access)
+                        example: 2
                       repositories_ever_added:
                         type: integer
                         description: Total number of repositories ever added
@@ -1147,6 +1155,8 @@ paths:
                 totals:
                   repositories_current: 42
                   api_keys_current: 15
+                  api_keys_active: 12
+                  api_keys_admin: 2
                   repositories_ever_added: 67
                   api_keys_ever_created: 23
                   discord_messages_sent: 1234
@@ -1196,14 +1206,85 @@ paths:
     get:
       tags:
       - Admin API
-      summary: List API keys
-      description: Get all API keys with their permissions and status
+      summary: List and search API keys
+      description: 'Get all API keys with their permissions and status.
+      
+        Supports pagination and advanced filtering to find specific keys.
+        
+        **Pagination Parameters:**
+        - `page`: Page number (default: 1)
+        - `per_page`: Keys per page - 10, 25, 50, 100, or -1 for all (default: 10)
+        
+        **Filter Parameters:**
+        - `name`: Search keys by name (partial match)
+        - `type`: Filter by key type (admin/regular)
+        - `status`: Filter by active status (active/inactive)
+        - `rate_limit`: Filter by rate limit range
+        - `permissions`: Filter by permissions bitmap (shows keys with ANY selected permission)
+        '
       security:
       - sessionAuth: []
       - bearerAuth: []
+      parameters:
+      - name: page
+        in: query
+        description: Page number (1-based)
+        required: false
+        schema:
+          type: integer
+          minimum: 1
+          default: 1
+          example: 1
+      - name: per_page
+        in: query
+        description: Number of keys per page (10, 25, 50, 100, or -1 for all)
+        required: false
+        schema:
+          type: integer
+          enum: [10, 25, 50, 100, -1]
+          default: 10
+          example: 10
+      - name: name
+        in: query
+        description: Search for keys by name (partial match, case-insensitive)
+        required: false
+        schema:
+          type: string
+          example: production
+      - name: type
+        in: query
+        description: Filter by key type
+        required: false
+        schema:
+          type: string
+          enum: [admin, regular]
+          example: admin
+      - name: status
+        in: query
+        description: Filter by active status
+        required: false
+        schema:
+          type: string
+          enum: [active, inactive]
+          example: active
+      - name: rate_limit
+        in: query
+        description: Filter by rate limit range
+        required: false
+        schema:
+          type: string
+          enum: [unlimited, 0-100, 101-500, 501-1000]
+          example: unlimited
+      - name: permissions
+        in: query
+        description: Filter by permissions bitmap (returns keys that have ANY of the specified permissions). Use bitwise OR to combine multiple permissions.
+        required: false
+        schema:
+          type: integer
+          example: 3
       responses:
         '200':
-          description: List of API keys
+          description: List of API keys with pagination info
           content:
             application/json:
               schema:
@@ -1213,6 +1294,25 @@ paths:
                     type: array
                     items:
                       $ref: '#/components/schemas/APIKey'
+                  pagination:
+                    type: object
+                    properties:
+                      page:
+                        type: integer
+                        description: Current page number
+                        example: 1
+                      per_page:
+                        type: integer
+                        description: Keys per page (-1 means all)
+                        example: 10
+                      total:
+                        type: integer
+                        description: Total number of keys matching filters
+                        example: 47
+                      total_pages:
+                        type: integer
+                        description: Total number of pages
+                        example: 5
         '401':
           description: Unauthorized - Session expired or invalid
           content:

@@ -98,6 +98,43 @@ body .container {
     margin-top: 15px;
 }
 
+/* Pagination Controls */
+.pagination-controls {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 15px;
+    padding: 0 10px;
+}
+
+.pagination-controls label {
+    margin: 0;
+    color: var(--text-color);
+}
+
+.pagination-controls select {
+    padding: 5px 10px;
+    border-radius: 4px;
+    background: var(--darker-bg);
+    color: var(--text-color);
+    border: 1px solid var(--border-color);
+    cursor: pointer;
+}
+
+.pagination-controls select:hover {
+    border-color: var(--primary-color);
+}
+
+#pagination-info {
+    color: var(--text-muted);
+    font-size: 0.9em;
+}
+
+#pagination-buttons {
+    display: flex;
+    gap: 5px;
+}
+
 .warning-text {
     color: var(--warning-color);
     font-weight: 600;

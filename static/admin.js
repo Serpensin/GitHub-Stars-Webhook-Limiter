@@ -31,6 +31,12 @@ let currentLogFile = ''; // Track currently selected log file
 let liveViewInterval = null; // Interval for live view auto-refresh
 let availableLogFiles = []; // Store available log files
 
+// Pagination state
+let currentPage = 1;
+let keysPerPage = 10;
+let totalKeys = 0;
+let totalPages = 0;
+
 // Store cleanup configuration
 window.cleanupConfig = null;
 
@@ -301,10 +307,53 @@ async function loadKeys() {
             await fetchPermissionsConfig();
         }
         
-    const response = await fetch('/admin/api/keys', { credentials: 'same-origin' });
+        // Build query string with filters
+        const params = new URLSearchParams({
+            page: currentPage,
+            per_page: keysPerPage
+        });
+        
+        // Add search filters if present
+        const nameFilter = document.getElementById('search-name')?.value.trim();
+        const typeFilter = document.getElementById('filter-type')?.value;
+        const statusFilter = document.getElementById('filter-status')?.value;
+        const rateLimitFilter = document.getElementById('filter-rate-limit')?.value;
+        
+        if (nameFilter) params.append('name', nameFilter);
+        if (typeFilter) params.append('type', typeFilter);
+        if (statusFilter) params.append('status', statusFilter);
+        if (rateLimitFilter) params.append('rate_limit', rateLimitFilter);
+        
+        // Add permissions filter
+        const searchPermsContainer = document.getElementById('search-permissions-container');
+        if (searchPermsContainer && window.permissionsConfig) {
+            let selectedPerms = 0;
+            for (const perm of window.permissionsConfig) {
+                const searchId = 'search-perm-' + String(perm.name).replace(/[^A-Za-z0-9_\-]/g, '-');
+                const checkbox = document.getElementById(searchId);
+                if (checkbox && checkbox.checked) {
+                    selectedPerms |= Number(perm.value);
+                }
+            }
+            if (selectedPerms > 0) {
+                params.append('permissions', selectedPerms);
+            }
+        }
+        
+        const response = await fetch(`/admin/api/keys?${params.toString()}`, { credentials: 'same-origin' });
         if (response.ok) {
             const data = await response.json();
+            
+            // Update pagination state
+            if (data.pagination) {
+                totalKeys = data.pagination.total;
+                totalPages = data.pagination.total_pages;
+                currentPage = data.pagination.page;
+                keysPerPage = data.pagination.per_page;
+            }
+            
             renderKeys(data.keys);
+            renderPagination();
             resetSessionTimer(); // Reset timer on successful API call
         } else if (response.status === 401) {
             const data = await response.json();
@@ -324,6 +373,186 @@ async function loadKeys() {
     } catch (error) {
         keysList.innerHTML = '<p class="error-message">Failed to load API keys</p>';
         console.error('Load keys error:', error);
+    }
+}
+
+// Pagination functions
+function renderPagination() {
+    const paginationInfo = document.getElementById('pagination-info');
+    const paginationButtons = document.getElementById('pagination-buttons');
+    const gotoPageContainer = document.getElementById('goto-page-container');
+    
+    if (!paginationInfo || !paginationButtons) return;
+    
+    // Update info text
+    if (keysPerPage === -1) {
+        paginationInfo.textContent = `Showing all ${totalKeys} keys`;
+    } else {
+        const start = (currentPage - 1) * keysPerPage + 1;
+        const end = Math.min(currentPage * keysPerPage, totalKeys);
+        paginationInfo.textContent = `Showing ${start}-${end} of ${totalKeys}`;
+    }
+    
+    // Show/hide goto page based on whether there are multiple pages
+    if (gotoPageContainer) {
+        if (keysPerPage === -1 || totalPages <= 1) {
+            gotoPageContainer.style.display = 'none';
+        } else {
+            gotoPageContainer.style.display = 'flex';
+        }
+    }
+    
+    // Update buttons
+    paginationButtons.innerHTML = '';
+    
+    if (keysPerPage === -1 || totalPages <= 1) {
+        // Don't show pagination buttons if showing all or only one page
+        return;
+    }
+    
+    // Previous button
+    const prevBtn = document.createElement('button');
+    prevBtn.className = 'btn btn-small btn-secondary';
+    prevBtn.textContent = '‹ Previous';
+    prevBtn.disabled = currentPage === 1;
+    prevBtn.onclick = () => changePage(currentPage - 1);
+    paginationButtons.appendChild(prevBtn);
+    
+    // Page number buttons
+    const maxButtons = 5;
+    let startPage = Math.max(1, currentPage - Math.floor(maxButtons / 2));
+    let endPage = Math.min(totalPages, startPage + maxButtons - 1);
+    
+    if (endPage - startPage < maxButtons - 1) {
+        startPage = Math.max(1, endPage - maxButtons + 1);
+    }
+    
+    if (startPage > 1) {
+        const firstBtn = document.createElement('button');
+        firstBtn.className = 'btn btn-small btn-secondary';
+        firstBtn.textContent = '1';
+        firstBtn.onclick = () => changePage(1);
+        paginationButtons.appendChild(firstBtn);
+        
+        if (startPage > 2) {
+            const ellipsis = document.createElement('span');
+            ellipsis.textContent = '...';
+            ellipsis.style.padding = '0 10px';
+            paginationButtons.appendChild(ellipsis);
+        }
+    }
+    
+    for (let i = startPage; i <= endPage; i++) {
+        const pageBtn = document.createElement('button');
+        pageBtn.className = i === currentPage ? 'btn btn-small btn-primary' : 'btn btn-small btn-secondary';
+        pageBtn.textContent = String(i);
+        pageBtn.onclick = () => changePage(i);
+        paginationButtons.appendChild(pageBtn);
+    }
+    
+    if (endPage < totalPages) {
+        if (endPage < totalPages - 1) {
+            const ellipsis = document.createElement('span');
+            ellipsis.textContent = '...';
+            ellipsis.style.padding = '0 10px';
+            paginationButtons.appendChild(ellipsis);
+        }
+        
+        const lastBtn = document.createElement('button');
+        lastBtn.className = 'btn btn-small btn-secondary';
+        lastBtn.textContent = String(totalPages);
+        lastBtn.onclick = () => changePage(totalPages);
+        paginationButtons.appendChild(lastBtn);
+    }
+    
+    // Next button
+    const nextBtn = document.createElement('button');
+    nextBtn.className = 'btn btn-small btn-secondary';
+    nextBtn.textContent = 'Next ›';
+    nextBtn.disabled = currentPage === totalPages;
+    nextBtn.onclick = () => changePage(currentPage + 1);
+    paginationButtons.appendChild(nextBtn);
+}
+
+function changePage(page) {
+    if (page < 1 || page > totalPages) return;
+    currentPage = page;
+    loadKeys();
+}
+
+function changeKeysPerPage() {
+    const select = document.getElementById('keys-per-page');
+    keysPerPage = parseInt(select.value);
+    currentPage = 1; // Reset to first page when changing per page
+    loadKeys();
+}
+
+// Go to specific page
+function gotoPage() {
+    const input = document.getElementById('goto-page');
+    const page = parseInt(input.value);
+    
+    if (!page || isNaN(page)) {
+        alert('Please enter a valid page number');
+        return;
+    }
+    
+    if (page < 1) {
+        alert('Page number must be at least 1');
+        input.value = '';
+        return;
+    }
+    
+    if (page > totalPages) {
+        alert(`Page number cannot exceed ${totalPages}`);
+        input.value = '';
+        return;
+    }
+    
+    currentPage = page;
+    input.value = ''; // Clear input after jumping
+    loadKeys();
+}
+
+// Apply search filters
+function applyFilters() {
+    currentPage = 1; // Reset to first page when applying filters
+    loadKeys();
+}
+
+// Clear all filters
+function clearFilters() {
+    document.getElementById('search-name').value = '';
+    document.getElementById('filter-type').value = '';
+    document.getElementById('filter-status').value = '';
+    document.getElementById('filter-rate-limit').value = '';
+    
+    // Clear permissions checkboxes
+    const searchPermsContainer = document.getElementById('search-permissions-container');
+    if (searchPermsContainer && window.permissionsConfig) {
+        for (const perm of window.permissionsConfig) {
+            const searchId = 'search-perm-' + String(perm.name).replace(/[^A-Za-z0-9_\-]/g, '-');
+            const checkbox = document.getElementById(searchId);
+            if (checkbox) checkbox.checked = false;
+        }
+    }
+    
+    currentPage = 1;
+    loadKeys();
+}
+
+// Toggle permissions filter visibility
+function togglePermissionsFilter() {
+    const container = document.getElementById('permissions-filter-container');
+    const btn = document.getElementById('toggle-perms-btn');
+    if (!container || !btn) return;
+    
+    if (container.style.display === 'none') {
+        container.style.display = 'block';
+        btn.textContent = '▲ Permissions';
+    } else {
+        container.style.display = 'none';
+        btn.textContent = '▼ Permissions';
     }
 }
 
@@ -379,14 +608,17 @@ function renderPermissionCheckboxes() {
     if (!window.permissionsConfig || !Array.isArray(window.permissionsConfig)) return;
     const container = document.getElementById('permissions-container');
     const editContainer = document.getElementById('edit-permissions-container');
+    const searchContainer = document.getElementById('search-permissions-container');
     if (!container || !editContainer) return;
 
     container.innerHTML = '';
     editContainer.innerHTML = '';
+    if (searchContainer) searchContainer.innerHTML = '';
 
     for (const perm of window.permissionsConfig) {
         const id = _permId(perm.name);
         const editId = _editPermId(perm.name);
+        const searchId = 'search-perm-' + String(perm.name).replace(/[^A-Za-z0-9_\-]/g, '-');
 
         // Add checkbox for add-key form
         const label = document.createElement('label');
@@ -410,6 +642,15 @@ function renderPermissionCheckboxes() {
         const editInput = editLabel.querySelector('input');
         editInput.id = editId;
         editContainer.appendChild(editLabel);
+        
+        // Add checkbox for search filter
+        if (searchContainer) {
+            const searchLabel = label.cloneNode(true);
+            const searchInput = searchLabel.querySelector('input');
+            searchInput.id = searchId;
+            searchInput.dataset.permValue = String(perm.value);
+            searchContainer.appendChild(searchLabel);
+        }
 
         // Wire change events to update generate button state
         input.addEventListener('change', updateGenerateBtnState);

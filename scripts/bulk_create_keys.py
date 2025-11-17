@@ -9,8 +9,8 @@ import requests
 BASE_URL = "http://127.0.0.1:5000"
 
 # Load API key from environment variable for security
-API_KEY = "9HZ7wknntLZXEzGYyRrpZYPoySwv5jTm3r4odOuZmVI"
-TOTAL_KEYS = 100_000
+API_KEY = "tF3wIbq3kzGRTNuW3FmAan9iribm7CgeogfZBD5G4ao"
+TOTAL_KEYS = 100_00
 PERMISSION = 42
 # Match Gunicorn config: 4 workers * 100 connections = 400 total capacity
 # Use fewer workers than server capacity to avoid overwhelming it

@@ -293,21 +293,114 @@ def admin_get_permissions():
 def admin_list_keys():
     """
     Lists all API keys (without sensitive data).
+    Supports pagination with ?page=1&per_page=10
+    Supports filtering with ?name=, ?type=, ?status=, ?rate_limit=, ?permissions=
     """
     assert get_db is not None
     db = get_db()
     cursor = db.cursor()
-    cursor.execute(
+    
+    # Get pagination parameters
+    page = request.args.get("page", 1, type=int)
+    per_page = request.args.get("per_page", 10, type=int)
+    
+    # Get filter parameters
+    name_filter = request.args.get("name", "").strip()
+    type_filter = request.args.get("type", "").strip()  # "admin" or "regular"
+    status_filter = request.args.get("status", "").strip()  # "active" or "inactive"
+    rate_limit_filter = request.args.get("rate_limit", "").strip()  # "unlimited", "0-100", etc.
+    permissions_filter = request.args.get("permissions", "", type=str).strip()  # bitmap as string
+    
+    # Validate pagination parameters
+    if page < 1:
+        page = 1
+    if per_page not in [10, 25, 50, 100, -1]:  # -1 means "all"
+        per_page = 10
+    
+    # Build WHERE clause based on filters
+    where_clauses = []
+    params = []
+    
+    if name_filter:
+        where_clauses.append("name LIKE ?")
+        params.append(f"%{name_filter}%")
+    
+    if type_filter == "admin":
+        where_clauses.append("is_admin_key = 1")
+    elif type_filter == "regular":
+        where_clauses.append("(is_admin_key = 0 OR is_admin_key IS NULL)")
+    
+    if status_filter == "active":
+        where_clauses.append("is_active = 1")
+    elif status_filter == "inactive":
+        where_clauses.append("(is_active = 0 OR is_active IS NULL)")
+    
+    if rate_limit_filter == "unlimited":
+        where_clauses.append("(rate_limit = 0 OR is_admin_key = 1)")
+    elif rate_limit_filter == "0-100":
+        where_clauses.append("rate_limit > 0 AND rate_limit <= 100 AND (is_admin_key = 0 OR is_admin_key IS NULL)")
+    elif rate_limit_filter == "101-500":
+        where_clauses.append("rate_limit > 100 AND rate_limit <= 500")
+    elif rate_limit_filter == "501-1000":
+        where_clauses.append("rate_limit > 500 AND rate_limit <= 1000")
+    
+    # Permissions filter: check if key has ANY of the selected permissions (bitwise AND)
+    if permissions_filter:
+        try:
+            perms_bitmap = int(permissions_filter)
+            if perms_bitmap > 0:
+                # Use bitwise AND to check if key has any of the selected permissions
+                # SQLite doesn't have native bitwise operators, so we use the & operator
+                where_clauses.append("((permissions & ?) != 0 OR is_admin_key = 1)")
+                params.append(perms_bitmap)
+        except ValueError:
+            # Invalid permissions value, ignore
+            pass
+    
+    where_sql = " AND ".join(where_clauses) if where_clauses else "1=1"
+    
+    # Get total count with filters
+    count_query = f"SELECT COUNT(*) as total FROM api_keys WHERE {where_sql}"
+    cursor.execute(count_query, params)
+    total = cursor.fetchone()["total"]
+    
+    # Build query with pagination and filters
+    if per_page == -1:
+        # Return all keys
+        query = f"""
+            SELECT id, name, created_at, last_used, is_active, permissions, rate_limit, is_admin_key
+            FROM api_keys
+            WHERE {where_sql}
+            ORDER BY created_at DESC
         """
-        SELECT id, name, created_at, last_used, is_active, permissions, rate_limit, is_admin_key
-        FROM api_keys
-        ORDER BY created_at DESC
+        cursor.execute(query, params)
+    else:
+        # Return paginated keys
+        offset = (page - 1) * per_page
+        query = f"""
+            SELECT id, name, created_at, last_used, is_active, permissions, rate_limit, is_admin_key
+            FROM api_keys
+            WHERE {where_sql}
+            ORDER BY created_at DESC
+            LIMIT ? OFFSET ?
         """
-    )
+        cursor.execute(query, params + [per_page, offset])
+    
     keys = cursor.fetchall()
 
     if logger:
-        logger.info("Admin: Listed %s API keys", len(keys))
+        logger.info(
+            "Admin: Listed %s API keys (page %s, per_page %s, filters: %s)",
+            len(keys), page, per_page,
+            {
+                "name": name_filter,
+                "type": type_filter,
+                "status": status_filter,
+                "rate_limit": rate_limit_filter,
+                "permissions": permissions_filter
+            }
+        )
+    
     return (
         jsonify(
             {
@@ -325,7 +418,13 @@ def admin_list_keys():
                         ),
                     }
                     for key in keys
-                ]
+                ],
+                "pagination": {
+                    "page": page,
+                    "per_page": per_page,
+                    "total": total,
+                    "total_pages": (total + per_page - 1) // per_page if per_page > 0 else 1,
+                }
             }
         ),
         200,

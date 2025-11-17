@@ -13,12 +13,21 @@ It supports both SQLite (default) and PostgreSQL databases, with Sentry for erro
 - ✅ **Discord Notifications**: Sends formatted embeds to Discord webhooks
 - ✅ **Web Interface**: Easy-to-use front-end for repository management
 - ✅ **API Key Authentication**: Secure programmatic access with Argon2id-hashed API keys
-- ✅ **Admin Panel**: Password-protected interface for API key management
+- ✅ **Admin Panel**: Password-protected interface for API key management, jetzt mit Pagination, direkter Seitenwahl, Such- und Filterfunktionen (inkl. dynamischer Berechtigungsfilter)
 - ✅ **Database Support**: SQLite (default) or PostgreSQL
 - ✅ **Repository ID Tracking**: Uses GitHub repository and owner IDs for resilience against name changes
 - ✅ **Webhook Verification**: Responds to GitHub's ping event for webhook verification
 - ✅ **Health Check**: Provides monitoring endpoint
 - ✅ **Sentry Integration**: Optional error tracking and performance monitoring
+
+
+## New in v1.4.0
+
+- 🚀 **Admin Panel Pagination & Advanced Search**: API-Key-Übersicht jetzt mit Seitenwahl, direktem Seitenwechsel, Such- und Filterfunktionen (Name, Typ, Status, Rate Limit, dynamische Berechtigungen, Erstellungsdatum)
+- 🚀 **Dynamischer Berechtigungsfilter**: Filtere API-Keys nach einzelnen oder mehreren Berechtigungen (bitweise, dynamisch generiert)
+- 🚀 **Verbesserte Statistikanzeige**: Zeigt aktive/admin Keys, Ladeverhalten optimiert
+- 🚀 **OpenAPI & Doku aktualisiert**: Alle neuen Filter- und Pagination-Parameter dokumentiert, Try-Page unterstützt neue Features
+- 🚀 **UX-Verbesserungen**: Goto-Page-Eingabe nur sichtbar, wenn mehr als eine Seite vorhanden ist; Filter und Pagination sind reaktiv
 
 ## New in v2.0.0
 
@@ -226,12 +235,28 @@ Star or watch your repository to verify Discord notifications work!
 - `POST /admin/api/logout` - End admin session
 
 #### API Key Management
-- `GET /admin/api/keys` - List all API keys
-- `POST /admin/api/keys` - Create new API key
-- `PATCH /admin/api/keys/<key_id>` - Update API key (name, permissions, rate limit)
-- `DELETE /admin/api/keys/<key_id>` - Delete API key
-- `POST /admin/api/keys/<key_id>/toggle` - Activate/deactivate API key
-- `POST /admin/api/keys/bulk` - Bulk operations (activate, deactivate, delete multiple keys)
+- `GET /admin/api/keys` - List all API keys (unterstützt Pagination, Such- und Filterparameter, dynamische Berechtigungsfilter)
+  - `POST /admin/api/keys` - Create new API key
+  - `PATCH /admin/api/keys/<key_id>` - Update API key (name, permissions, rate limit)
+  - `DELETE /admin/api/keys/<key_id>` - Delete API key
+  - `POST /admin/api/keys/<key_id>/toggle` - Activate/deactivate API key
+  - `POST /admin/api/keys/bulk` - Bulk operations (activate, deactivate, delete multiple keys)
+
+**API key pagination & filter parameters (GET /admin/api/keys):**
+
+| Parameter         | Type     | Description                                                                 |
+|-------------------|----------|-----------------------------------------------------------------------------|
+| `page`            | int      | Page number (1-based)                                                       |
+| `per_page`        | int      | Items per page                                                              |
+| `search`          | string   | Search by name                                                              |
+| `type`            | string   | Filter by key type (`user`, `admin`, etc.)                                  |
+| `status`          | string   | Filter by status (`active`, `inactive`)                                     |
+| `ratelimit`       | int      | Filter by rate limit                                                        |
+| `created_from`    | string   | Filter by creation date (ISO 8601, from)                                    |
+| `created_to`      | string   | Filter by creation date (ISO 8601, to)                                      |
+| `permissions`     | int[]    | Filter by any permissions (bitwise, dynamic, AND combination)               |
+
+All filters can be combined. The response includes `total`, `page`, `per_page`, `pages`, and the filtered keys.
 
 #### Logs
 - `GET /admin/api/logs/list` - List available log files
@@ -352,7 +377,7 @@ The application provides a comprehensive health check endpoint for monitoring an
 {
   "status": "healthy",
   "app": "GitHub Events Limiter",
-  "version": "2.0.0",
+  "version": "1.4.0",
   "database": {
     "type": "sqlite",
     "status": "healthy"
@@ -366,7 +391,7 @@ If the database is unhealthy:
 {
   "status": "unhealthy",
   "app": "GitHub Events Limiter",
-  "version": "2.0.0",
+  "version": "1.4.0",
   "database": {
     "type": "postgresql",
     "status": "unhealthy",

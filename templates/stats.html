@@ -7,7 +7,7 @@
     <title>GitHub Stars Webhook Limiter - Statistics</title>
     <link rel="icon" type="image/svg+xml" href="/favicon.ico">
     <link rel="stylesheet" href="/static/style.css">
-    <script type="module">
+    <script>
         // CSRF token for API authentication
         // Sanitized to prevent XSS via Jinja2 escaping
         globalThis.CSRF_TOKEN = {{ csrf_token | tojson }};
@@ -193,6 +193,30 @@
         function renderStats(data) {
             const content = document.getElementById('stats-content');
             content.innerHTML = ''; // Clear content
+            
+            // Check if there's any meaningful data
+            const hasData = data.totals && (
+                data.totals.repositories_current > 0 ||
+                data.totals.api_keys_current > 0 ||
+                data.totals.events_received > 0 ||
+                (data.top_users && (
+                    (data.top_users.valid_events && data.top_users.valid_events.length > 0) ||
+                    (data.top_users.invalid_events && data.top_users.invalid_events.length > 0)
+                ))
+            );
+            
+            if (!hasData) {
+                const noDataDiv = document.createElement('div');
+                noDataDiv.className = 'stats-section';
+                noDataDiv.innerHTML = `
+                    <h2>No Data Available</h2>
+                    <p style="text-align: center; color: var(--text-muted); padding: 40px;">
+                        📊 No statistics to display yet. Start using the service to see data here!
+                    </p>
+                `;
+                content.appendChild(noDataDiv);
+                return;
+            }
 
             // Create stats sections using DOM manipulation
             const statsSection1 = document.createElement('div');
@@ -205,8 +229,16 @@
                         <div class="stat-value">${Number.parseInt(data.totals.repositories_current) || 0}</div>
                     </div>
                     <div class="stat-item">
-                        <div class="stat-label">Active API Keys</div>
+                        <div class="stat-label">Total API Keys</div>
                         <div class="stat-value">${Number.parseInt(data.totals.api_keys_current) || 0}</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-label">Active API Keys</div>
+                        <div class="stat-value">${Number.parseInt(data.totals.api_keys_active) || 0}</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-label">Admin API Keys</div>
+                        <div class="stat-value">${Number.parseInt(data.totals.api_keys_admin) || 0}</div>
                     </div>
                     <div class="stat-item">
                         <div class="stat-label">Total Events Received</div>
@@ -329,7 +361,9 @@
         }
 
         // Load stats on page load
-        await loadStats();
+        (async function() {
+            await loadStats();
+        })();
 
         // Auto-refresh every 30 seconds
         setInterval(loadStats, 30000);

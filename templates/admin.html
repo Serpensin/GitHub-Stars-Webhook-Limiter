@@ -119,6 +119,69 @@
                             <button class="btn btn-small btn-danger" onclick="bulkAction('delete')">Delete Selected</button>
                         </div>
                     </div>
+                    
+                    <!-- Search and Filters -->
+                    <div class="search-filter-container" style="margin-bottom: 15px; padding: 15px; background: var(--darker-bg); border-radius: 6px;">
+                        <div style="display: flex; gap: 10px; margin-bottom: 10px; flex-wrap: wrap;">
+                            <input type="text" id="search-name" placeholder="Search by name..." 
+                                   onkeypress="if(event.key === 'Enter') applyFilters()"
+                                   style="flex: 1; min-width: 200px; padding: 8px; border-radius: 4px; background: var(--card-bg); color: var(--text-color); border: 1px solid var(--border-color);">
+                            <select id="filter-type" style="padding: 8px; border-radius: 4px; background: var(--card-bg); color: var(--text-color); border: 1px solid var(--border-color);">
+                                <option value="">All Types</option>
+                                <option value="admin">Admin Keys</option>
+                                <option value="regular">Regular Keys</option>
+                            </select>
+                            <select id="filter-status" style="padding: 8px; border-radius: 4px; background: var(--card-bg); color: var(--text-color); border: 1px solid var(--border-color);">
+                                <option value="">All Status</option>
+                                <option value="active">Active</option>
+                                <option value="inactive">Inactive</option>
+                            </select>
+                            <select id="filter-rate-limit" style="padding: 8px; border-radius: 4px; background: var(--card-bg); color: var(--text-color); border: 1px solid var(--border-color);">
+                                <option value="">All Rate Limits</option>
+                                <option value="unlimited">Unlimited</option>
+                                <option value="0-100">0-100/hr</option>
+                                <option value="101-500">101-500/hr</option>
+                                <option value="501-1000">501-1000/hr</option>
+                            </select>
+                            <button onclick="applyFilters()" class="btn btn-small btn-primary" style="white-space: nowrap;">🔍 Search</button>
+                            <button onclick="clearFilters()" class="btn btn-small btn-secondary" style="white-space: nowrap;">✖ Clear</button>
+                            <button onclick="togglePermissionsFilter()" class="btn btn-small btn-secondary" style="white-space: nowrap;" id="toggle-perms-btn">▼ Permissions</button>
+                        </div>
+                        <!-- Permissions Filter (collapsible) -->
+                        <div id="permissions-filter-container" style="display: none; margin-top: 10px; padding: 10px; background: var(--card-bg); border-radius: 4px;">
+                            <label style="display: block; margin-bottom: 8px; color: var(--text-color); font-weight: 500;">Filter by Permissions:</label>
+                            <div id="search-permissions-container" class="permissions-inline" style="display: flex; flex-wrap: wrap; gap: 8px;">
+                                <!-- Permission checkboxes will be populated dynamically by admin.js -->
+                            </div>
+                            <small style="display: block; margin-top: 8px; color: var(--text-muted);">Select permissions to filter keys (shows keys with ANY selected permission)</small>
+                        </div>
+                    </div>
+                    
+                    <div class="pagination-controls" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px; padding: 0 10px; flex-wrap: wrap; gap: 10px;">
+                        <div style="display: flex; align-items: center; gap: 10px;">
+                            <label for="keys-per-page" style="margin: 0;">Keys per page:</label>
+                            <select id="keys-per-page" onchange="changeKeysPerPage()" style="padding: 5px 10px; border-radius: 4px; background: var(--darker-bg); color: var(--text-color); border: 1px solid var(--border-color);">
+                                <option value="10" selected>10</option>
+                                <option value="25">25</option>
+                                <option value="50">50</option>
+                                <option value="100">100</option>
+                                <option value="-1">All</option>
+                            </select>
+                        </div>
+                        <div id="pagination-info" style="color: var(--text-muted); font-size: 0.9em;">
+                            <!-- Pagination info will be inserted here -->
+                        </div>
+                        <div id="goto-page-container" style="display: flex; align-items: center; gap: 10px;">
+                            <label for="goto-page" style="margin: 0; font-size: 0.9em;">Go to page:</label>
+                            <input type="number" id="goto-page" min="1" placeholder="#" 
+                                   onkeypress="if(event.key === 'Enter') gotoPage()" 
+                                   style="width: 60px; padding: 5px; border-radius: 4px; background: var(--darker-bg); color: var(--text-color); border: 1px solid var(--border-color); text-align: center;">
+                            <button onclick="gotoPage()" class="btn btn-small btn-secondary">Go</button>
+                        </div>
+                        <div id="pagination-buttons" style="display: flex; gap: 5px;">
+                            <!-- Pagination buttons will be inserted here -->
+                        </div>
+                    </div>
                     <div id="keys-list">
                         <p class="loading">Loading API keys...</p>
                     </div>
