@@ -63,6 +63,38 @@ def require_api_key_or_csrf(f):
     return wrapper
 
 
+def require_api_key_or_csrf_or_admin(f):
+    """
+    Custom decorator for /api/stats that accepts:
+    - API key in Authorization header, OR
+    - CSRF token in X-CSRF-Token header, OR
+    - Admin session cookie
+    """
+
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        # Check for admin session first
+        if session.get("admin_authenticated"):
+            # Validate session is still valid (same logic as require_admin_auth)
+            admin_login_time = session.get("admin_login_time", 0)
+            current_time = int(time.time())
+            session_age = current_time - admin_login_time
+
+            if session_age <= 300:  # 5 minute timeout
+                if logger:
+                    logger.debug("API route access granted: valid admin session")
+                # Refresh session timestamp (sliding session)
+                session["admin_login_time"] = current_time
+                session.modified = True
+                return f(*args, **kwargs)
+
+        # Fall back to standard API key or CSRF check
+        assert _require_api_key_or_csrf is not None
+        return _require_api_key_or_csrf(f)(*args, **kwargs)
+
+    return decorated_function
+
+
 def init_api_routes(
     _logger,
     _require_api_key_or_csrf_func,
@@ -1170,38 +1202,6 @@ def api_decode_permissions():
         ),
         200,
     )
-
-
-def require_api_key_or_csrf_or_admin(f):
-    """
-    Custom decorator for /api/stats that accepts:
-    - API key in Authorization header, OR
-    - CSRF token in X-CSRF-Token header, OR
-    - Admin session cookie
-    """
-
-    @wraps(f)
-    def decorated_function(*args, **kwargs):
-        # Check for admin session first
-        if session.get("admin_authenticated"):
-            # Validate session is still valid (same logic as require_admin_auth)
-            admin_login_time = session.get("admin_login_time", 0)
-            current_time = int(time.time())
-            session_age = current_time - admin_login_time
-
-            if session_age <= 300:  # 5 minute timeout
-                if logger:
-                    logger.debug("API route access granted: valid admin session")
-                # Refresh session timestamp (sliding session)
-                session["admin_login_time"] = current_time
-                session.modified = True
-                return f(*args, **kwargs)
-
-        # Fall back to standard API key or CSRF check
-        assert _require_api_key_or_csrf is not None
-        return _require_api_key_or_csrf(f)(*args, **kwargs)
-
-    return decorated_function
 
 
 @api_bp.route("/stats", methods=["GET"])
