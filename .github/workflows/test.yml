@@ -42,38 +42,38 @@ jobs:
         python3 << 'PYSCRIPT'
         import os
         
+        # Escape $ signs for Docker Compose by doubling them
+        def escape_for_docker(value):
+            if value:
+                return value.replace('$', '$$')
+            return value
+        
         env_content = f"""# Required Secrets
-        ENCRYPTION_KEY={os.environ.get('ENCRYPTION_KEY', '')}
-        ADMIN_PASSWORD_HASH={os.environ.get('ADMIN_PASSWORD_HASH', '')}
-        FLASK_SECRET_KEY={os.environ.get('FLASK_SECRET_KEY', '')}
+        ENCRYPTION_KEY={escape_for_docker(os.environ.get('ENCRYPTION_KEY', ''))}
+        ADMIN_PASSWORD_HASH={escape_for_docker(os.environ.get('ADMIN_PASSWORD_HASH', ''))}
+        FLASK_SECRET_KEY={escape_for_docker(os.environ.get('FLASK_SECRET_KEY', ''))}
         
         # Internal Secret (auto-generated if not set)
-        INTERNAL_SECRET={os.environ.get('INTERNAL_SECRET', '')}
+        INTERNAL_SECRET={escape_for_docker(os.environ.get('INTERNAL_SECRET', ''))}
         
         # Optional: Sentry DSN
-        SENTRY_DSN={os.environ.get('SENTRY_DSN', '')}
+        SENTRY_DSN={escape_for_docker(os.environ.get('SENTRY_DSN', ''))}
         
         # Test Environment Variables
-        TEST_API_KEY_PLAINTEXT={os.environ.get('TEST_API_KEY_PLAINTEXT', '')}
-        TEST_API_KEY_NAME={os.environ.get('TEST_API_KEY_NAME', '')}
-        TEST_GITHUB_REPO_URL={os.environ.get('TEST_GITHUB_REPO_URL', '')}
-        TEST_DISCORD_WEBHOOK_URL={os.environ.get('TEST_DISCORD_WEBHOOK_URL', '')}
-        TEST_INVALID_DISCORD_WEBHOOK_URL={os.environ.get('TEST_INVALID_DISCORD_WEBHOOK_URL', '')}
+        TEST_API_KEY_PLAINTEXT={escape_for_docker(os.environ.get('TEST_API_KEY_PLAINTEXT', ''))}
+        TEST_API_KEY_NAME={escape_for_docker(os.environ.get('TEST_API_KEY_NAME', ''))}
+        TEST_GITHUB_REPO_URL={escape_for_docker(os.environ.get('TEST_GITHUB_REPO_URL', ''))}
+        TEST_DISCORD_WEBHOOK_URL={escape_for_docker(os.environ.get('TEST_DISCORD_WEBHOOK_URL', ''))}
+        TEST_INVALID_DISCORD_WEBHOOK_URL={escape_for_docker(os.environ.get('TEST_INVALID_DISCORD_WEBHOOK_URL', ''))}
         
         # Docker environment
         IS_DOCKER=true
         LOG_LEVEL=INFO
         """
         
-        with open('.env', 'w') as f:
+        with open('.env.docker', 'w') as f:
             f.write(env_content)
         PYSCRIPT
-
-    - name: Prepare Docker environment file
-      run: |
-        # Copy .env as-is for docker-compose --env-file
-        # Docker Compose handles environment variables correctly
-        cp .env .env.docker
 
     - name: Select compose file
       id: compose
@@ -151,7 +151,7 @@ jobs:
       if: always()
       run: |
         docker compose -f ${{ steps.compose.outputs.file }} --env-file .env.docker down -v
-        rm -f .env .env.docker
+        rm -f .env.docker
 
   test-summary:
     needs: test
