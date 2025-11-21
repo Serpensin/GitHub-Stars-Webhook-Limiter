@@ -132,7 +132,7 @@ Admin API keys bypass all permissions (see `AuthenticationHandler.verify_api_key
 **CRITICAL**: A test is only considered PASSED when ALL of the following succeed with ZERO errors, issues, or skips:
 
 ### Docker Stack Testing (RECOMMENDED - Fully Automated)
-The project includes a Docker Compose stack (`test-stack.ps1`) that runs the server and tests in separate containers. This is the **preferred testing method** as it's fully automated and the agent has complete control.
+The project includes a comprehensive test suite (`test-all.ps1`) that runs the server and tests in separate containers. This is the **preferred testing method** as it's fully automated and the agent has complete control.
 
 **Architecture**:
 - **Server Container**: Runs the Flask application with health checks and auto-created test API key
@@ -140,48 +140,57 @@ The project includes a Docker Compose stack (`test-stack.ps1`) that runs the ser
 - **Automatic Cleanup**: Database and containers cleaned before/after tests
 - **Test Environment**: Uses `TEST_API_KEY_PLAINTEXT` from `.env` to auto-create admin API key in database
 
-#### Test with SQLite (Default)
+#### Test All Configurations (Default)
 ```powershell
-.\test-stack.ps1
+.\test-all.ps1
 ```
 **What it does**:
-1. Cleans up existing containers and SQLite database
-2. Creates `.env.docker` with escaped `$$` for Argon2 password hashes
-3. Builds server and test-runner containers
-4. Starts server container with health checks
-5. Server auto-creates admin API key from `TEST_API_KEY_PLAINTEXT` environment variable
-6. Waits for server to be healthy (max 120 seconds)
-7. Runs pytest in test-runner container (all 64 tests)
-8. Reports results and cleans up
+1. Tests SQLite configuration:
+   - Cleans up existing containers and SQLite database
+   - Creates `.env.docker` with escaped `$$` for Argon2 password hashes
+   - Builds server and test-runner containers
+   - Starts server container with health checks
+   - Server auto-creates admin API key from `TEST_API_KEY_PLAINTEXT` environment variable
+   - Waits for server to be healthy (max 120 seconds)
+   - Runs pytest in test-runner container (all 64 tests)
+   - Reports results and cleans up
+2. Tests PostgreSQL configuration (embedded server):
+   - Same process as SQLite but uses PostgreSQL
+   - PostgreSQL runs inside the server container
+3. Reports final summary of all test results
 
 **Exit codes**: Returns 0 if all tests pass, non-zero if any fail.
 
-**Expected Results**: All 64 tests should pass (58 in `test_all_endpoints.py`, 6 in `test_authentication.py`).
+**Expected Results**: All 64 tests should pass for both configurations (58 in `test_all_endpoints.py`, 6 in `test_authentication.py`).
 
-#### Test with PostgreSQL
+#### Test Specific Configuration
 ```powershell
-.\test-stack.ps1 -Database postgresql
-```
-Uses embedded PostgreSQL in the server container (no external DB needed).
+# SQLite only
+.\test-all.ps1 -Configuration sqlite
 
-**Expected Results**: All 64 tests should pass with PostgreSQL, identical to SQLite results.
+# PostgreSQL only
+.\test-all.ps1 -Configuration postgresql
+```
 
 #### Advanced Options
 ```powershell
+# Stop at first failure
+.\test-all.ps1 -FailFast
+
 # Keep containers running for debugging
-.\test-stack.ps1 -KeepRunning
+.\test-all.ps1 -Configuration sqlite -KeepRunning
 
 # View full container logs after tests
-.\test-stack.ps1 -ViewLogs
+.\test-all.ps1 -ViewLogs
 
-# PostgreSQL with logs
-.\test-stack.ps1 -Database postgresql -ViewLogs
+# PostgreSQL with logs and fail-fast
+.\test-all.ps1 -Configuration postgresql -ViewLogs -FailFast
 ```
 
 **For debugging failed tests**:
 ```powershell
 # Run with KeepRunning to inspect
-.\test-stack.ps1 -KeepRunning
+.\test-all.ps1 -Configuration sqlite -KeepRunning
 
 # In another terminal, check server logs
 docker-compose -f docker-compose.test.yml logs server
@@ -364,8 +373,8 @@ API keys have configurable rate limits (requests per hour). Admin keys bypass li
 1. **Virtual Environment**: Ensure venv exists and is activated (`.venv\Scripts\Activate.ps1`) - create if missing (`py -m venv .venv`)
 2. **Linting**: Run ALL four linting commands (`isort`, `black`, `flake8`, `pylint`) - must pass with zero errors
 3. **Testing**: Run automated Docker stack tests for BOTH configurations:
-   - SQLite: `.\test-stack.ps1` - must exit with code 0
-   - PostgreSQL: `.\test-stack.ps1 -Database postgresql` - must exit with code 0
+   - All configurations: `.\test-all.ps1` - must exit with code 0
+   - Or individual: `.\test-all.ps1 -Configuration sqlite` / `.\test-all.ps1 -Configuration postgresql`
 4. **Security**: Run Snyk scan for significant code changes (see `.github/instructions/snyk_rules.instructions.md`)
 
 **Code-Specific Guidelines:**
@@ -375,3 +384,4 @@ API keys have configurable rate limits (requests per hour). Admin keys bypass li
 4. **Secrets**: Never log decrypted secrets (use `<encrypted>` placeholder)
 5. **Error handling**: Return proper HTTP status codes matching existing patterns
 6. **Logging**: Use appropriate levels (DEBUG for verbose, INFO for key events, ERROR for failures)
+

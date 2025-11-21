@@ -1,0 +1,151 @@
+name: Test Suite
+
+on:
+  push:
+    branches: [ "master", "main", "develop" ]
+  pull_request:
+    branches: [ "master", "main", "develop" ]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        database: [sqlite, postgresql]
+    
+    steps:
+    - name: Checkout Code
+      uses: actions/checkout@v4
+
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+
+    - name: Create .env file from secrets
+      run: |
+        cat > .env << EOF
+        # Required Secrets
+        ENCRYPTION_KEY=${{ secrets.ENCRYPTION_KEY }}
+        ADMIN_PASSWORD_HASH=${{ secrets.ADMIN_PASSWORD_HASH }}
+        FLASK_SECRET_KEY=${{ secrets.FLASK_SECRET_KEY }}
+        
+        # Internal Secret (auto-generated if not set)
+        INTERNAL_SECRET=${{ secrets.INTERNAL_SECRET }}
+        
+        # Optional: Sentry DSN
+        SENTRY_DSN=${{ secrets.SENTRY_DSN }}
+        
+        # Test Environment Variables
+        TEST_API_KEY_PLAINTEXT=${{ secrets.TEST_API_KEY_PLAINTEXT }}
+        TEST_API_KEY_NAME=${{ secrets.TEST_API_KEY_NAME }}
+        TEST_GITHUB_REPO_URL=${{ secrets.TEST_GITHUB_REPO_URL }}
+        TEST_DISCORD_WEBHOOK_URL=${{ secrets.TEST_DISCORD_WEBHOOK_URL }}
+        TEST_INVALID_DISCORD_WEBHOOK_URL=${{ secrets.TEST_INVALID_DISCORD_WEBHOOK_URL }}
+        
+        # Docker environment
+        IS_DOCKER=true
+        LOG_LEVEL=INFO
+        EOF
+
+    - name: Prepare Docker environment file
+      run: |
+        # Escape $ symbols for docker-compose
+        sed 's/\$/\$\$/g' .env > .env.docker
+
+    - name: Select compose file
+      id: compose
+      run: |
+        if [ "${{ matrix.database }}" = "postgresql" ]; then
+          echo "file=docker-compose.test-postgresql.yml" >> $GITHUB_OUTPUT
+          echo "name=PostgreSQL" >> $GITHUB_OUTPUT
+        else
+          echo "file=docker-compose.test.yml" >> $GITHUB_OUTPUT
+          echo "name=SQLite" >> $GITHUB_OUTPUT
+        fi
+
+    - name: Clean up previous containers
+      run: |
+        docker compose -f ${{ steps.compose.outputs.file }} --env-file .env.docker down -v 2>/dev/null || true
+        if [ "${{ matrix.database }}" = "sqlite" ]; then
+          rm -f GitHub_Events_Limiter/data.db
+        fi
+
+    - name: Build containers
+      run: |
+        docker compose -f ${{ steps.compose.outputs.file }} --env-file .env.docker build --no-cache
+
+    - name: Start server container
+      run: |
+        docker compose -f ${{ steps.compose.outputs.file }} --env-file .env.docker up -d server
+
+    - name: Wait for server health
+      timeout-minutes: 3
+      run: |
+        MAX_WAIT=120
+        WAITED=0
+        CONTAINER_NAME=$(docker compose -f ${{ steps.compose.outputs.file }} ps -q server)
+        
+        while [ $WAITED -lt $MAX_WAIT ]; do
+          HEALTH=$(docker inspect --format='{{.State.Health.Status}}' $CONTAINER_NAME 2>/dev/null || echo "unknown")
+          
+          if [ "$HEALTH" = "healthy" ]; then
+            echo "✓ Server is healthy!"
+            exit 0
+          fi
+          
+          echo "Waiting for server to be healthy... ($WAITED/$MAX_WAIT seconds)"
+          sleep 5
+          WAITED=$((WAITED + 5))
+        done
+        
+        echo "✗ Server failed to become healthy within $MAX_WAIT seconds!"
+        docker compose -f ${{ steps.compose.outputs.file }} --env-file .env.docker logs server
+        exit 1
+
+    - name: Run tests
+      run: |
+        docker compose -f ${{ steps.compose.outputs.file }} --env-file .env.docker up --exit-code-from test-runner test-runner
+
+    - name: Show logs on failure
+      if: failure()
+      run: |
+        echo "=== Server Logs ==="
+        docker compose -f ${{ steps.compose.outputs.file }} --env-file .env.docker logs server
+        echo ""
+        echo "=== Test Runner Logs ==="
+        docker compose -f ${{ steps.compose.outputs.file }} --env-file .env.docker logs test-runner
+
+    - name: Upload test results
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: test-results-${{ matrix.database }}
+        path: |
+          test-results/
+        retention-days: 30
+
+    - name: Clean up containers
+      if: always()
+      run: |
+        docker compose -f ${{ steps.compose.outputs.file }} --env-file .env.docker down -v
+        rm -f .env .env.docker
+
+  test-summary:
+    needs: test
+    runs-on: ubuntu-latest
+    if: always()
+    steps:
+    - name: Check test results
+      run: |
+        if [ "${{ needs.test.result }}" = "success" ]; then
+          echo "✓ All database configurations passed tests!"
+          exit 0
+        else
+          echo "✗ Some database configurations failed tests"
+          exit 1
+        fi

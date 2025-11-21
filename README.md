@@ -549,22 +549,78 @@ py -m pylint *.py routes modules --fail-under=10.0
 
 ### Running Tests
 
-The project includes a comprehensive test suite. See [Tests/README.md](Tests/README.md) for detailed documentation.
+The project includes a comprehensive test suite that automatically tests all database configurations. See [Tests/README.md](Tests/README.md) for detailed documentation.
+
+#### Automated Testing (Recommended)
+
+**Test all configurations:**
+```powershell
+.\test-all.ps1
+```
+
+This will test both SQLite and PostgreSQL configurations sequentially with full cleanup between runs.
+
+**Test specific configuration:**
+```powershell
+# SQLite only
+.\test-all.ps1 -Configuration sqlite
+
+# PostgreSQL only
+.\test-all.ps1 -Configuration postgresql
+```
+
+**Advanced options:**
+```powershell
+# Stop at first failure
+.\test-all.ps1 -FailFast
+
+# Keep containers running for debugging
+.\test-all.ps1 -Configuration sqlite -KeepRunning
+
+# View full container logs
+.\test-all.ps1 -ViewLogs
+```
+
+#### Continuous Integration
+
+The project uses GitHub Actions to automatically test all configurations on every push and pull request. The workflow tests both SQLite and PostgreSQL configurations in parallel.
+
+**View test results:**
+- Check the "Actions" tab in the GitHub repository
+- Each commit and PR shows test status badges
+- Test artifacts are retained for 30 days
+
+**Required secrets** (configured in repository settings):
+- `ENCRYPTION_KEY` - Fernet encryption key
+- `ADMIN_PASSWORD_HASH` - Argon2id password hash
+- `FLASK_SECRET_KEY` - Flask session secret
+- `INTERNAL_SECRET` - Internal API secret
+- `TEST_API_KEY_PLAINTEXT` - Test API key
+- `TEST_API_KEY_NAME` - Test API key name
+- `TEST_GITHUB_REPO_URL` - GitHub repo URL for tests
+- `TEST_DISCORD_WEBHOOK_URL` - Valid Discord webhook
+- `TEST_INVALID_DISCORD_WEBHOOK_URL` - Invalid webhook for error testing
+
+#### Manual Testing
+
+If you need to run tests manually against a running instance:
 
 **Prerequisites:**
 - Running application instance (Docker or manual)
 - Admin password configured
+- Activated virtual environment
 
 **Run all tests:**
 ```bash
-python -m unittest discover Tests -v
+.venv\Scripts\Activate.ps1
+cd Tests
+python -m pytest . -v
 ```
 
 **Run specific test file:**
 ```bash
-python -m unittest Tests.test_authentication -v
-python -m unittest Tests.test_api_keys -v
-python -m unittest Tests.test_all_endpoints -v
+python -m pytest test_authentication.py -v
+python -m pytest test_all_endpoints.py -v
 ```
 
 **Test coverage:**
@@ -572,9 +628,10 @@ python -m unittest Tests.test_all_endpoints -v
 - ✅ API Key Management
 - ✅ Permission System
 - ✅ Rate Limiting
-- ✅ All API Endpoints
+- ✅ All API Endpoints (64 tests total)
 - ✅ Input Validation
 - ✅ Error Handling
+- ✅ Both SQLite and PostgreSQL databases
 
 ### File Structure
 
