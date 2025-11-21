@@ -27,30 +27,41 @@ jobs:
       uses: docker/setup-buildx-action@v3
 
     - name: Create .env file from secrets
+      env:
+        ENCRYPTION_KEY: ${{ secrets.ENCRYPTION_KEY }}
+        ADMIN_PASSWORD_HASH: ${{ secrets.ADMIN_PASSWORD_HASH }}
+        FLASK_SECRET_KEY: ${{ secrets.FLASK_SECRET_KEY }}
+        INTERNAL_SECRET: ${{ secrets.INTERNAL_SECRET }}
+        SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
+        TEST_API_KEY_PLAINTEXT: ${{ secrets.TEST_API_KEY_PLAINTEXT }}
+        TEST_API_KEY_NAME: ${{ secrets.TEST_API_KEY_NAME }}
+        TEST_GITHUB_REPO_URL: ${{ secrets.TEST_GITHUB_REPO_URL }}
+        TEST_DISCORD_WEBHOOK_URL: ${{ secrets.TEST_DISCORD_WEBHOOK_URL }}
+        TEST_INVALID_DISCORD_WEBHOOK_URL: ${{ secrets.TEST_INVALID_DISCORD_WEBHOOK_URL }}
       run: |
-        cat > .env << EOF
-        # Required Secrets
-        ENCRYPTION_KEY=${{ secrets.ENCRYPTION_KEY }}
-        ADMIN_PASSWORD_HASH=${{ secrets.ADMIN_PASSWORD_HASH }}
-        FLASK_SECRET_KEY=${{ secrets.FLASK_SECRET_KEY }}
-        
-        # Internal Secret (auto-generated if not set)
-        INTERNAL_SECRET=${{ secrets.INTERNAL_SECRET }}
-        
-        # Optional: Sentry DSN
-        SENTRY_DSN=${{ secrets.SENTRY_DSN }}
-        
-        # Test Environment Variables
-        TEST_API_KEY_PLAINTEXT=${{ secrets.TEST_API_KEY_PLAINTEXT }}
-        TEST_API_KEY_NAME=${{ secrets.TEST_API_KEY_NAME }}
-        TEST_GITHUB_REPO_URL=${{ secrets.TEST_GITHUB_REPO_URL }}
-        TEST_DISCORD_WEBHOOK_URL=${{ secrets.TEST_DISCORD_WEBHOOK_URL }}
-        TEST_INVALID_DISCORD_WEBHOOK_URL=${{ secrets.TEST_INVALID_DISCORD_WEBHOOK_URL }}
-        
-        # Docker environment
-        IS_DOCKER=true
-        LOG_LEVEL=INFO
-        EOF
+        {
+          echo "# Required Secrets"
+          echo "ENCRYPTION_KEY=${ENCRYPTION_KEY}"
+          echo "ADMIN_PASSWORD_HASH=${ADMIN_PASSWORD_HASH}"
+          echo "FLASK_SECRET_KEY=${FLASK_SECRET_KEY}"
+          echo ""
+          echo "# Internal Secret (auto-generated if not set)"
+          echo "INTERNAL_SECRET=${INTERNAL_SECRET}"
+          echo ""
+          echo "# Optional: Sentry DSN"
+          echo "SENTRY_DSN=${SENTRY_DSN}"
+          echo ""
+          echo "# Test Environment Variables"
+          echo "TEST_API_KEY_PLAINTEXT=${TEST_API_KEY_PLAINTEXT}"
+          echo "TEST_API_KEY_NAME=${TEST_API_KEY_NAME}"
+          echo "TEST_GITHUB_REPO_URL=${TEST_GITHUB_REPO_URL}"
+          echo "TEST_DISCORD_WEBHOOK_URL=${TEST_DISCORD_WEBHOOK_URL}"
+          echo "TEST_INVALID_DISCORD_WEBHOOK_URL=${TEST_INVALID_DISCORD_WEBHOOK_URL}"
+          echo ""
+          echo "# Docker environment"
+          echo "IS_DOCKER=true"
+          echo "LOG_LEVEL=INFO"
+        } > .env
 
     - name: Prepare Docker environment file
       run: |
