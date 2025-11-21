@@ -712,12 +712,16 @@ if db_type == "postgresql":
         # min_size: Minimum connections kept alive
         # max_size: Maximum connections per worker (4 workers * 25 = 100 total max)
         # configure: Set row_factory for all connections from pool
+        # prepare_threshold: Disable prepared statements to avoid worker conflicts
         _postgres_pool = ConnectionPool(
             conninfo=conninfo,
             min_size=2,  # Keep 2 connections warm per worker
             max_size=25,  # Max 25 connections per worker
             timeout=30.0,  # Wait up to 30s for a connection
-            kwargs={"row_factory": psycopg_dict_row},  # All connections use dict rows
+            kwargs={
+                "row_factory": psycopg_dict_row,  # All connections use dict rows
+                "prepare_threshold": 0,  # Disable prepared statements (prevents worker conflicts)
+            },
         )
         logger.info("PostgreSQL connection pool initialized (min=2, max=25 per worker)")
     except Exception as e:
