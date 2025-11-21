@@ -39,29 +39,35 @@ jobs:
         TEST_DISCORD_WEBHOOK_URL: ${{ secrets.TEST_DISCORD_WEBHOOK_URL }}
         TEST_INVALID_DISCORD_WEBHOOK_URL: ${{ secrets.TEST_INVALID_DISCORD_WEBHOOK_URL }}
       run: |
-        {
-          echo "# Required Secrets"
-          echo "ENCRYPTION_KEY=${ENCRYPTION_KEY}"
-          echo "ADMIN_PASSWORD_HASH=${ADMIN_PASSWORD_HASH}"
-          echo "FLASK_SECRET_KEY=${FLASK_SECRET_KEY}"
-          echo ""
-          echo "# Internal Secret (auto-generated if not set)"
-          echo "INTERNAL_SECRET=${INTERNAL_SECRET}"
-          echo ""
-          echo "# Optional: Sentry DSN"
-          echo "SENTRY_DSN=${SENTRY_DSN}"
-          echo ""
-          echo "# Test Environment Variables"
-          echo "TEST_API_KEY_PLAINTEXT=${TEST_API_KEY_PLAINTEXT}"
-          echo "TEST_API_KEY_NAME=${TEST_API_KEY_NAME}"
-          echo "TEST_GITHUB_REPO_URL=${TEST_GITHUB_REPO_URL}"
-          echo "TEST_DISCORD_WEBHOOK_URL=${TEST_DISCORD_WEBHOOK_URL}"
-          echo "TEST_INVALID_DISCORD_WEBHOOK_URL=${TEST_INVALID_DISCORD_WEBHOOK_URL}"
-          echo ""
-          echo "# Docker environment"
-          echo "IS_DOCKER=true"
-          echo "LOG_LEVEL=INFO"
-        } > .env
+        python3 << 'PYSCRIPT'
+        import os
+        
+        env_content = f"""# Required Secrets
+        ENCRYPTION_KEY={os.environ.get('ENCRYPTION_KEY', '')}
+        ADMIN_PASSWORD_HASH={os.environ.get('ADMIN_PASSWORD_HASH', '')}
+        FLASK_SECRET_KEY={os.environ.get('FLASK_SECRET_KEY', '')}
+        
+        # Internal Secret (auto-generated if not set)
+        INTERNAL_SECRET={os.environ.get('INTERNAL_SECRET', '')}
+        
+        # Optional: Sentry DSN
+        SENTRY_DSN={os.environ.get('SENTRY_DSN', '')}
+        
+        # Test Environment Variables
+        TEST_API_KEY_PLAINTEXT={os.environ.get('TEST_API_KEY_PLAINTEXT', '')}
+        TEST_API_KEY_NAME={os.environ.get('TEST_API_KEY_NAME', '')}
+        TEST_GITHUB_REPO_URL={os.environ.get('TEST_GITHUB_REPO_URL', '')}
+        TEST_DISCORD_WEBHOOK_URL={os.environ.get('TEST_DISCORD_WEBHOOK_URL', '')}
+        TEST_INVALID_DISCORD_WEBHOOK_URL={os.environ.get('TEST_INVALID_DISCORD_WEBHOOK_URL', '')}
+        
+        # Docker environment
+        IS_DOCKER=true
+        LOG_LEVEL=INFO
+        """
+        
+        with open('.env', 'w') as f:
+            f.write(env_content)
+        PYSCRIPT
 
     - name: Prepare Docker environment file
       run: |
