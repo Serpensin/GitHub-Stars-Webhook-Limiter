@@ -54,6 +54,7 @@ admin_bp = Blueprint("admin", __name__, url_prefix="/admin")
 ERROR_DATABASE = "Database error occurred"
 ERROR_FILE_ERROR = "File operation error occurred"
 ERROR_API_KEY_NOT_FOUND = "API key not found"
+ERROR_MISSING_JSON = "Request body must be JSON"
 
 # These will be set by main.py when registering blueprints
 logger: Optional[Any] = None
@@ -61,6 +62,9 @@ _require_admin_auth: Optional[Callable] = None  # Store the actual decorator
 verify_admin_password: Optional[Callable[[str], bool]] = None
 hash_api_key: Optional[Callable[[str], str]] = None
 get_db: Optional[Callable[[], Any]] = None
+get_repository_by_id: Optional[Callable[[int], Optional[dict]]] = None
+discord_handler: Optional[Any] = None
+encrypt_secret: Optional[Callable[[str], str]] = None
 increment_stat: Optional[Callable[[str], None]] = None
 internal_server_secret: Optional[str] = None  # Secret for internal-only routes
 
@@ -114,21 +118,27 @@ def init_admin_routes(
     _verify_admin_password,
     _hash_api_key,
     _get_db,
+    _get_repository_by_id,
     _increment_stat=None,
     _internal_server_secret=None,
+    _discord_handler=None,
+    _encrypt_secret=None,
 ):
     """Initialize route dependencies"""
     global logger, _require_admin_auth, verify_admin_password
-    global hash_api_key, get_db, increment_stat, internal_server_secret
+    global hash_api_key, get_db, get_repository_by_id, increment_stat, internal_server_secret
+    global discord_handler, encrypt_secret
 
     logger = _logger
     _require_admin_auth = _require_admin_auth_func
     verify_admin_password = _verify_admin_password
     hash_api_key = _hash_api_key
     get_db = _get_db
+    get_repository_by_id = _get_repository_by_id
     increment_stat = _increment_stat
     internal_server_secret = _internal_server_secret
-    increment_stat = _increment_stat
+    discord_handler = _discord_handler
+    encrypt_secret = _encrypt_secret
 
 
 @admin_bp.route("", methods=["GET"])
@@ -299,51 +309,52 @@ def admin_list_keys():
     assert get_db is not None
     db = get_db()
     cursor = db.cursor()
-    
+
     # Get pagination parameters
     page = request.args.get("page", 1, type=int)
     per_page = request.args.get("per_page", 10, type=int)
-    
+
     # Get filter parameters
     name_filter = request.args.get("name", "").strip()
     type_filter = request.args.get("type", "").strip()  # "admin" or "regular"
     status_filter = request.args.get("status", "").strip()  # "active" or "inactive"
     rate_limit_filter = request.args.get("rate_limit", "").strip()  # "unlimited", "0-100", etc.
     permissions_filter = request.args.get("permissions", "", type=str).strip()  # bitmap as string
-    
+
     # Validate pagination parameters
-    if page < 1:
-        page = 1
+    page = max(page, 1)
     if per_page not in [10, 25, 50, 100, -1]:  # -1 means "all"
         per_page = 10
-    
+
     # Build WHERE clause based on filters
     where_clauses = []
     params = []
-    
+
     if name_filter:
         where_clauses.append("name LIKE ?")
         params.append(f"%{name_filter}%")
-    
+
     if type_filter == "admin":
         where_clauses.append("is_admin_key = 1")
     elif type_filter == "regular":
         where_clauses.append("(is_admin_key = 0 OR is_admin_key IS NULL)")
-    
+
     if status_filter == "active":
         where_clauses.append("is_active = 1")
     elif status_filter == "inactive":
         where_clauses.append("(is_active = 0 OR is_active IS NULL)")
-    
+
     if rate_limit_filter == "unlimited":
         where_clauses.append("(rate_limit = 0 OR is_admin_key = 1)")
     elif rate_limit_filter == "0-100":
-        where_clauses.append("rate_limit > 0 AND rate_limit <= 100 AND (is_admin_key = 0 OR is_admin_key IS NULL)")
+        where_clauses.append(
+            "rate_limit > 0 AND rate_limit <= 100 AND (is_admin_key = 0 OR is_admin_key IS NULL)"
+        )
     elif rate_limit_filter == "101-500":
         where_clauses.append("rate_limit > 100 AND rate_limit <= 500")
     elif rate_limit_filter == "501-1000":
         where_clauses.append("rate_limit > 500 AND rate_limit <= 1000")
-    
+
     # Permissions filter: check if key has ANY of the selected permissions (bitwise AND)
     if permissions_filter:
         try:
@@ -356,14 +367,14 @@ def admin_list_keys():
         except ValueError:
             # Invalid permissions value, ignore
             pass
-    
+
     where_sql = " AND ".join(where_clauses) if where_clauses else "1=1"
-    
+
     # Get total count with filters
     count_query = f"SELECT COUNT(*) as total FROM api_keys WHERE {where_sql}"
     cursor.execute(count_query, params)
     total = cursor.fetchone()["total"]
-    
+
     # Build query with pagination and filters
     if per_page == -1:
         # Return all keys
@@ -385,22 +396,24 @@ def admin_list_keys():
             LIMIT ? OFFSET ?
         """
         cursor.execute(query, params + [per_page, offset])
-    
+
     keys = cursor.fetchall()
 
     if logger:
         logger.info(
             "Admin: Listed %s API keys (page %s, per_page %s, filters: %s)",
-            len(keys), page, per_page,
+            len(keys),
+            page,
+            per_page,
             {
                 "name": name_filter,
                 "type": type_filter,
                 "status": status_filter,
                 "rate_limit": rate_limit_filter,
-                "permissions": permissions_filter
-            }
+                "permissions": permissions_filter,
+            },
         )
-    
+
     return (
         jsonify(
             {
@@ -424,7 +437,7 @@ def admin_list_keys():
                     "per_page": per_page,
                     "total": total,
                     "total_pages": (total + per_page - 1) // per_page if per_page > 0 else 1,
-                }
+                },
             }
         ),
         200,
@@ -776,6 +789,225 @@ def admin_bulk_action():
         return jsonify({"error": ERROR_DATABASE}), 500
 
 
+@admin_bp.route("/api/repositories", methods=["GET"])
+@require_admin_auth
+def admin_list_repositories():  # NOSONAR
+    """
+    Lists all registered repositories with pagination and filtering.
+    Admin-only endpoint for repository management.
+
+    Query Parameters:
+    - page: Page number (default 1)
+    - per_page: Items per page (10, 25, 50, 100, -1 for all)
+    - name: Filter by repository name (partial match)
+    - events: Filter by enabled events ("star", "watch", "both")
+
+    Returns:
+        JSON response with repositories list and pagination info
+    """
+    assert get_db is not None
+    db = get_db()
+    cursor = db.cursor()
+
+    # Get pagination parameters
+    page = request.args.get("page", 1, type=int)
+    per_page = request.args.get("per_page", 10, type=int)
+
+    # Get filter parameters
+    name_filter = request.args.get("name", "").strip()
+    events_filter = request.args.get("events", "").strip()
+
+    # Validate pagination parameters
+    page = max(page, 1)
+    if per_page not in [10, 25, 50, 100, -1]:
+        per_page = 10
+
+    # Build WHERE clause based on filters
+    where_clauses = []
+    params = []
+
+    if name_filter:
+        where_clauses.append("repo_full_name LIKE ?")
+        params.append(f"%{name_filter}%")
+
+    if events_filter == "star":
+        where_clauses.append("enabled_events = 'star'")
+    elif events_filter == "watch":
+        where_clauses.append("enabled_events = 'watch'")
+    elif events_filter == "both":
+        where_clauses.append("enabled_events = 'star,watch' OR enabled_events = 'watch,star'")
+
+    where_sql = " AND ".join(where_clauses) if where_clauses else "1=1"
+
+    # Get total count with filters
+    count_query = f"SELECT COUNT(*) as total FROM repositories WHERE {where_sql}"
+    cursor.execute(count_query, params)
+    total = cursor.fetchone()["total"]
+
+    # Build query with pagination and filters
+    if per_page == -1:
+        query = f"""
+            SELECT repo_id, repo_full_name, owner_id, secret_encrypted,
+                   discord_webhook_url, enabled_events, last_event_received
+            FROM repositories
+            WHERE {where_sql}
+            ORDER BY repo_full_name ASC
+        """
+        cursor.execute(query, params)
+    else:
+        offset = (page - 1) * per_page
+        query = f"""
+            SELECT repo_id, repo_full_name, owner_id, secret_encrypted,
+                   discord_webhook_url, enabled_events, last_event_received
+            FROM repositories
+            WHERE {where_sql}
+            ORDER BY repo_full_name ASC
+            LIMIT ? OFFSET ?
+        """
+        cursor.execute(query, params + [per_page, offset])
+
+    repos = cursor.fetchall()
+
+    if logger:
+        logger.info(
+            "Admin: Listed %s repositories (page %s, per_page %s, filters: name=%s, events=%s)",
+            len(repos),
+            page,
+            per_page,
+            name_filter,
+            events_filter,
+        )
+
+    return (
+        jsonify(
+            {
+                "repositories": [
+                    {
+                        "repo_id": repo["repo_id"],
+                        "repo_full_name": repo["repo_full_name"],
+                        "owner_id": repo["owner_id"],
+                        "secret_encrypted": repo["secret_encrypted"],  # Always encrypted
+                        "discord_webhook_url": repo["discord_webhook_url"],
+                        "enabled_events": repo["enabled_events"],
+                        "last_event_at": repo["last_event_received"],  # Map DB column to API field
+                    }
+                    for repo in repos
+                ],
+                "pagination": {
+                    "page": page,
+                    "per_page": per_page,
+                    "total": total,
+                    "total_pages": (total + per_page - 1) // per_page if per_page > 0 else 1,
+                },
+            }
+        ),
+        200,
+    )
+
+
+@admin_bp.route("/api/repositories/<int:repo_id>", methods=["PATCH", "DELETE"])
+@require_admin_auth
+def admin_manage_repository(repo_id: int):
+    """
+    Updates or deletes a repository configuration.
+    Admin-only endpoint - bypasses secret verification.
+
+    PATCH - Update repository:
+    {
+        "discord_webhook_url": "https://discord.com/api/webhooks/..." (optional),
+        "enabled_events": "star,watch" (optional),
+        "new_secret": "new_secret" (optional)
+    }
+
+    DELETE - Remove repository from database
+    """
+    assert get_db is not None
+    assert discord_handler is not None
+    assert encrypt_secret is not None
+    assert get_repository_by_id is not None
+
+    db = get_db()
+
+    # Verify repository exists
+    repo = get_repository_by_id(repo_id)
+    if not repo:
+        if logger:
+            logger.warning("Admin: Repository %s not found", repo_id)
+        return jsonify({"error": "Repository not found"}), 404
+
+    if request.method == "PATCH":
+        data = request.get_json()
+        if not data:
+            return jsonify({"error": ERROR_MISSING_JSON}), 400
+
+        new_discord = data.get("discord_webhook_url", "").strip()
+        enabled_events = data.get("enabled_events", "").strip()
+        new_secret = data.get("new_secret", "").strip()
+
+        # Validate Discord webhook if provided
+        if new_discord and not discord_handler.verify_webhook(new_discord):
+            if logger:
+                logger.warning("Admin: Invalid Discord webhook for repo %s", repo_id)
+            return jsonify({"error": "New Discord webhook URL is invalid or inactive"}), 400
+
+        # Validate enabled events if provided
+        if enabled_events:
+            events = enabled_events.split(",")
+            valid_events = {"star", "watch"}
+            if not all(event in valid_events for event in events):
+                return jsonify({"error": "Invalid event types"}), 400
+
+        # Build update query
+        updates = []
+        params = []
+
+        if new_discord:
+            updates.append("discord_webhook_url = ?")
+            params.append(new_discord)
+
+        if enabled_events:
+            updates.append("enabled_events = ?")
+            params.append(enabled_events)
+
+        if new_secret:
+            updates.append("secret_encrypted = ?")
+            params.append(encrypt_secret(new_secret))
+
+        if not updates:
+            return jsonify({"error": "No changes provided"}), 400
+
+        # Execute update
+        try:
+            query = f"UPDATE repositories SET {', '.join(updates)} WHERE repo_id = ?"
+            params.append(repo_id)
+            db.execute(query, tuple(params))
+
+            if logger:
+                logger.info("Admin: Updated repository %s (%s)", repo_id, repo["repo_full_name"])
+
+            return jsonify({"message": "Repository updated successfully"}), 200
+        except sqlite3.Error as e:
+            if logger:
+                logger.error("Admin: Database error updating repository %s: %s", repo_id, e)
+            return jsonify({"error": ERROR_DATABASE}), 500
+
+    elif request.method == "DELETE":
+        try:
+            db.execute("DELETE FROM repositories WHERE repo_id = ?", (repo_id,))
+
+            if logger:
+                logger.info("Admin: Deleted repository %s (%s)", repo_id, repo["repo_full_name"])
+
+            return jsonify({"message": "Repository deleted successfully"}), 200
+        except sqlite3.Error as e:
+            if logger:
+                logger.error("Admin: Database error deleting repository %s: %s", repo_id, e)
+            return jsonify({"error": ERROR_DATABASE}), 500
+
+    # This should never be reached due to method restrictions, but needed for consistent returns
+    return jsonify({"error": "Invalid request method"}), 405
+
+
 @admin_bp.route("/api/logs/list", methods=["GET"])
 @require_admin_auth
 def admin_list_log_files():
@@ -829,8 +1061,9 @@ def admin_get_logs():  # NOSONAR
         log_filename = request.args.get("file", f"{config.APP_NAME}.log")
 
         # Security: Strict validation to prevent directory traversal attacks
-        # Only allow alphanumeric, hyphens, underscores, and .log extension
-        if not re.match(r"^[a-zA-Z0-9_-]+\.log$", log_filename):
+        # Allow: GitHub_Events_Limiter.log, GitHub_Events_Limiter.YYYY-MM-DD.log, rotated logs, etc.
+        # Accept: [alnum_-]+(.YYYY-MM-DD)?.log
+        if not re.match(r"^[a-zA-Z0-9_-]+(\.[0-9]{4}-[0-9]{2}-[0-9]{2})?\.log$", log_filename):
             if logger:
                 logger.warning("Admin: Invalid log file name format: %s", log_filename)
             return jsonify({"error": "Invalid log file name"}), 400
@@ -913,8 +1146,9 @@ def admin_download_logs():
         log_filename = request.args.get("file", f"{config.APP_NAME}.log")
 
         # Security: Strict validation to prevent directory traversal attacks
-        # Only allow alphanumeric, hyphens, underscores, and .log extension
-        if not re.match(r"^[a-zA-Z0-9_-]+\.log$", log_filename):
+        # Allow: GitHub_Events_Limiter.log, GitHub_Events_Limiter.YYYY-MM-DD.log, rotated logs, etc.
+        # Accept: [alnum_-]+(.YYYY-MM-DD)?.log
+        if not re.match(r"^[a-zA-Z0-9_-]+(\.[0-9]{4}-[0-9]{2}-[0-9]{2})?\.log$", log_filename):
             if logger:
                 logger.warning("Admin: Invalid log file name format for download: %s", log_filename)
             return jsonify({"error": "Invalid log file name"}), 400

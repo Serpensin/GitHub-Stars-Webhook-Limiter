@@ -116,7 +116,9 @@ done
 
 # Create database if it doesn't exist
 echo "Creating database if not exists..."
-su-exec postgres psql -h localhost -p 5432 -U "$POSTGRES_USER" -tc "SELECT 1 FROM pg_database WHERE datname = '$POSTGRES_DB'" | grep -q 1 || \
+export PGPASSWORD="$POSTGRES_PASSWORD"
+# Connect to 'postgres' database (always exists) to check/create our application database
+su-exec postgres psql -h localhost -p 5432 -U "$POSTGRES_USER" -d postgres -tc "SELECT 1 FROM pg_database WHERE datname = '$POSTGRES_DB'" | grep -q 1 || \
     su-exec postgres createdb -h localhost -p 5432 -U "$POSTGRES_USER" "$POSTGRES_DB"
 
 # Export PostgreSQL connection details as individual environment variables

@@ -56,6 +56,7 @@ class AuthenticationHandler:
         get_db_func: Callable,
         bitmap_handler,
         server_start_time: int,
+        db_type: str = "sqlite",
         logger=None,
     ):
         """
@@ -67,6 +68,7 @@ class AuthenticationHandler:
             get_db_func: Function to get database connection
             bitmap_handler: BitmapHandler instance for permission checks
             server_start_time: Server startup timestamp (for session invalidation)
+            db_type: Database type ("sqlite" or "postgresql")
             logger: Logger instance for debug/error logging (optional)
         """
         self.ph = password_hasher
@@ -74,6 +76,7 @@ class AuthenticationHandler:
         self.get_db = get_db_func
         self.bitmap_handler = bitmap_handler
         self.server_start_time = server_start_time
+        self.db_type = db_type
 
         # Initialize logger
         if logger is None:
@@ -255,11 +258,14 @@ class AuthenticationHandler:
             return True, request_count + 1
         else:
             # First request for this API key - create tracking record
-            db.execute(
-                """
+            # Use proper timestamp conversion for PostgreSQL compatibility
+            timestamp_placeholder = "to_timestamp(?)" if self.db_type == "postgresql" else "?"
+            query = f"""
                 INSERT INTO api_rate_limit_tracking (api_key_id, first_request_time, request_count)
-                VALUES (?, ?, 1)
-                """,
+                VALUES (?, {timestamp_placeholder}, 1)
+            """
+            db.execute(
+                query,
                 (api_key_id, current_time),
             )
 
@@ -382,6 +388,7 @@ class AuthenticationHandler:
                             )
                         # Generate new token
                         session["csrf_token"] = secrets.token_hex(32)
+                        session["used_nonces"] = {}
                         req_time = request.headers.get("X-Request-Time", "0")
                         session["csrf_token_timestamp"] = int(req_time)
                         return (
@@ -423,17 +430,30 @@ class AuthenticationHandler:
                 # Convert lists back to sets for efficient membership testing
                 # Handle both old (set) and new (list) formats for backward compatibility
                 used_nonces_raw = session.get("used_nonces", {})
-                used_nonces = {}
-                for k, v in used_nonces_raw.items():
-                    if isinstance(v, set):
-                        # Old format (before fix) - already a set
-                        used_nonces[k] = v
-                    elif isinstance(v, list):
-                        # New format - convert list to set
-                        used_nonces[k] = set(v)
-                    else:
-                        # Unknown format - skip
-                        continue
+
+                # Handle legacy format where used_nonces was a list instead of dict
+                if isinstance(used_nonces_raw, list):
+                    # Convert old list format to new dict format
+                    used_nonces = {}
+                    if self.logger:
+                        self.logger.debug("Migrating used_nonces from list to dict format")
+                elif isinstance(used_nonces_raw, dict):
+                    used_nonces = {}
+                    for k, v in used_nonces_raw.items():
+                        if isinstance(v, set):
+                            # Old format (before fix) - already a set
+                            used_nonces[k] = v
+                        elif isinstance(v, list):
+                            # New format - convert list to set
+                            used_nonces[k] = set(v)
+                        else:
+                            # Unknown format - skip
+                            continue
+                else:
+                    # Unknown format - reset to empty dict
+                    used_nonces = {}
+                    if self.logger:
+                        self.logger.warning("Unknown used_nonces format, resetting to dict")
 
                 # Clean up nonces from old CSRF tokens (different time windows)
                 # This happens automatically when CSRF token refreshes
@@ -571,11 +591,11 @@ class AuthenticationHandler:
 
                 if self.logger:
                     self.logger.debug("API route access granted: valid CSRF token")
-                
+
                 # Mark this request as CSRF-authenticated (not API key)
                 # This allows permission checks to bypass for web UI requests
                 g.is_csrf_auth = True
-                
+
                 return f(*args, **kwargs)
 
             if self.logger:

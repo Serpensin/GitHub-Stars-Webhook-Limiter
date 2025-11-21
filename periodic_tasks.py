@@ -131,12 +131,12 @@ class PeriodicTaskManager:
         # Create a logger for this specific task
         logger_name = f"{self.log_name}.{task_name.replace(' ', '_')}"
         task_logger = self.log_manager.get_logger(logger_name)
-        
+
         # Remove duplicate handlers (LogManager may add handlers on each get_logger call)
         if len(task_logger.handlers) > 1:
             # Keep only the first handler, remove duplicates
             task_logger.handlers = task_logger.handlers[:1]
-        
+
         self.task_loggers[task_name] = task_logger
 
         self.tasks.append((task_func, interval, task_name))

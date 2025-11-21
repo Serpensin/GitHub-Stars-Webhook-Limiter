@@ -12,18 +12,19 @@ with incomplete configuration.
 """
 
 import os
-import re
 import secrets
 import sys
 
 try:
-    from argon2 import PasswordHasher, exceptions as argon2_exceptions
+    from argon2 import PasswordHasher
+    from argon2 import exceptions as argon2_exceptions
 except ImportError:
     print("[!] argon2-cffi not found, installing...")
     import subprocess
 
     subprocess.check_call([sys.executable, "-m", "pip", "install", "argon2-cffi"])
-    from argon2 import PasswordHasher, exceptions as argon2_exceptions
+    from argon2 import PasswordHasher
+    from argon2 import exceptions as argon2_exceptions
 try:
     from cryptography.fernet import Fernet
 except ImportError:
@@ -175,7 +176,10 @@ def generate_all_secrets():
     print(f"      ENCRYPTION_KEY: {encryption_key}")
     print(f"      FLASK_SECRET_KEY: {flask_secret}")
     print(f"      ADMIN_PASSWORD_HASH: {password_hash}")
-    print(f"      ADMIN_PASSWORD_HASH: {password_hash.replace('$', '$$')}  # Escape $ for Docker Compose")
+    print(
+        f"      ADMIN_PASSWORD_HASH: {password_hash.replace('$', '$$')}  "
+        f"# Escape $ for Docker Compose"
+    )
 
     print("\n" + "=" * 70)
     print("[!] IMPORTANT SECURITY NOTES:")

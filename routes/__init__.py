@@ -61,8 +61,11 @@ def register_blueprints(app: Flask, helpers: dict):
         helpers["verify_admin_password"],
         helpers["hash_api_key"],
         helpers["get_db"],
+        helpers["get_repository_by_id"],
         helpers["increment_stat"],
         helpers["internal_server_secret"],
+        helpers["discord_handler"],
+        helpers["encrypt_secret"],
     )
 
     # Register blueprints

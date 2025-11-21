@@ -1,0 +1,21 @@
+# Test runner Dockerfile - lightweight container for running pytest
+FROM python:3.11-slim
+
+WORKDIR /app
+
+# Install curl for potential debugging
+RUN apt-get update && apt-get install -y --no-install-recommends curl && rm -rf /var/lib/apt/lists/*
+
+# Install dependencies needed for tests
+COPY requirements-sqlite.txt .
+RUN pip install --no-cache-dir -r requirements-sqlite.txt && \
+    pip install --no-cache-dir pytest pytest-html requests
+
+# Tests will be mounted via volume, not copied
+# This avoids .dockerignore conflicts
+
+# Set environment for testing
+ENV PYTHONUNBUFFERED=1
+
+# Default command (can be overridden)
+CMD ["python", "-m", "pytest", "Tests/", "-v"]

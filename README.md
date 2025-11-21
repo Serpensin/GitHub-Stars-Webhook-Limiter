@@ -242,6 +242,21 @@ Star or watch your repository to verify Discord notifications work!
   - `POST /admin/api/keys/<key_id>/toggle` - Activate/deactivate API key
   - `POST /admin/api/keys/bulk` - Bulk operations (activate, deactivate, delete multiple keys)
 
+#### Repository Management (Admin Panel)
+- `GET /admin/api/repositories` - List all registered repositories with pagination and filtering
+  - Query Parameters:
+    - `page`: Page number (default 1)
+    - `per_page`: Items per page (10, 25, 50, 100, -1 for all)
+    - `name`: Filter by repository name (partial match)
+    - `events`: Filter by enabled events ("star", "watch", "both")
+- `PATCH /admin/api/repositories/<repo_id>` - Update repository (admin bypass - no secret needed)
+  - Update Discord webhook URL, enabled events, or generate new webhook secret
+  - Secrets are always displayed encrypted in the admin panel
+- `DELETE /admin/api/repositories/<repo_id>` - Delete repository (admin bypass - no secret needed)
+
+**Note**: Admin panel repository management bypasses webhook secret verification for convenience and security.
+
+
 **API key pagination & filter parameters (GET /admin/api/keys):**
 
 | Parameter         | Type     | Description                                                                 |
@@ -282,6 +297,23 @@ curl -X POST https://your-domain.com/api/repositories \
   -H "Content-Type: application/json" \
   -d '{"repo_url": "https://github.com/owner/repo", ...}'
 ```
+
+### Admin API Keys
+
+**Admin keys have special privileges:**
+- ✅ **Bypass Secret Verification**: Can modify or delete ANY repository without knowing the webhook secret
+- ✅ **Full API Access**: Unrestricted access to all API endpoints
+- ✅ **No Rate Limiting**: Admin keys ignore rate limit restrictions
+- ✅ **Admin Panel Access**: Can manage API keys and view system logs
+
+**Use admin keys for:**
+- Repository cleanup and maintenance
+- Automated testing and CI/CD pipelines
+- System administration tasks
+- Bulk repository operations
+
+**Security Note**: Admin keys are powerful - treat them like root passwords. Only create them when necessary and store them securely.
+
 ## Security Features
 
 ### Required Secrets Management
@@ -377,7 +409,7 @@ The application provides a comprehensive health check endpoint for monitoring an
 {
   "status": "healthy",
   "app": "GitHub Events Limiter",
-  "version": "1.4.0",
+  "version": "2.4.2",
   "database": {
     "type": "sqlite",
     "status": "healthy"
@@ -391,7 +423,7 @@ If the database is unhealthy:
 {
   "status": "unhealthy",
   "app": "GitHub Events Limiter",
-  "version": "1.4.0",
+  "version": "2.4.2",
   "database": {
     "type": "postgresql",
     "status": "unhealthy",

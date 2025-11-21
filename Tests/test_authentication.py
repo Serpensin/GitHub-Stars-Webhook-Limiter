@@ -8,13 +8,22 @@ This script tests the API authentication system to ensure:
 """
 
 import json
+import os
 import re
+import secrets
+import time
 import unittest
 
 import requests
 
-BASE_URL = "http://127.0.0.1:5000"
+# Allow override via environment variable for Docker container networking
+BASE_URL = os.environ.get("TEST_SERVER_URL", "http://127.0.0.1:5000")
 TEST_PASSWORD = "1234" # NOSONAR
+
+
+def generate_nonce():
+    """Generate a random nonce for CSRF anti-replay protection"""
+    return secrets.token_hex(16)
 
 
 class TestAuthentication(unittest.TestCase):
@@ -99,13 +108,27 @@ class TestAuthentication(unittest.TestCase):
 
         self.assertIsNotNone(self.__class__.session, "Admin session must exist")
 
+        # Get CSRF token from session cookie
+        csrf_match = re.search(r'<meta name="csrf-token" content="([^"]+)"', 
+                              self.__class__.session.get(f"{self.base_url}/admin").text)
+        self.assertIsNotNone(csrf_match, "CSRF token should be available")
+        csrf_token = csrf_match.group(1)
+
+        # Create API key with proper headers
+        headers = {
+            "X-CSRF-Token": csrf_token,
+            "X-Request-Time": str(int(time.time())),
+            "X-Request-Nonce": generate_nonce()
+        }
+
         response = self.__class__.session.post(
             f"{self.base_url}/admin/api/keys",
             json={
                 "name": "Test API Key",
                 "permissions": 1,
                 "rate_limit": 100
-            }
+            },
+            headers=headers
         )
         print(f"Status: {response.status_code}")
         data = response.json()
@@ -146,7 +169,23 @@ class TestAuthentication(unittest.TestCase):
 
         self.assertIsNotNone(self.__class__.session, "Admin session must exist")
 
-        response = self.__class__.session.get(f"{self.base_url}/admin/api/keys")
+        # Get CSRF token from session
+        csrf_match = re.search(r'<meta name="csrf-token" content="([^"]+)"', 
+                              self.__class__.session.get(f"{self.base_url}/admin").text)
+        self.assertIsNotNone(csrf_match, "CSRF token should be available")
+        csrf_token = csrf_match.group(1)
+
+        # List keys with proper headers
+        headers = {
+            "X-CSRF-Token": csrf_token,
+            "X-Request-Time": str(int(time.time())),
+            "X-Request-Nonce": generate_nonce()
+        }
+
+        response = self.__class__.session.get(
+            f"{self.base_url}/admin/api/keys",
+            headers=headers
+        )
         print(f"Status: {response.status_code}")
         data = response.json()
         print(f"Found {len(data.get('keys', []))} API key(s)")

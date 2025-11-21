@@ -313,11 +313,11 @@ async function deleteRepository() {
     }
 }
 
-// Set webhook URL dynamically
+// Set webhook URL dynamically (fallback if template didn't set it)
 globalThis.addEventListener('DOMContentLoaded', () => {
-    const webhookUrl = `${globalThis.location.origin}/webhook`;
     const webhookUrlElement = document.getElementById('webhook-url');
-    if (webhookUrlElement) {
+    if (webhookUrlElement && !webhookUrlElement.textContent.trim()) {
+        const webhookUrl = `${globalThis.location.origin}/webhook`;
         webhookUrlElement.textContent = webhookUrl;
     }
     

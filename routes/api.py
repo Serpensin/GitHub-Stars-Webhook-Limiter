@@ -112,7 +112,7 @@ def check_permission(permission_name: str):
     # Check if this request is CSRF-authenticated (from frontend)
     if getattr(g, "is_csrf_auth", False):
         return None
-    
+
     # API key authentication requires permission checks
     # Check if this is an API key request by verifying if api_key_id was set
     if not hasattr(g, "api_key_id"):
@@ -318,6 +318,8 @@ def api_manage_repository():  # pylint: disable=too-many-return-statements # NOS
                     {
                         "message": "Repository added successfully",
                         "repo_full_name": github_data["repo_full_name"],
+                        "repo_id": github_data["repo_id"],
+                        "enabled_events": enabled_events,
                     }
                 ),
                 201,
@@ -521,6 +523,245 @@ def api_manage_repository():  # pylint: disable=too-many-return-statements # NOS
             if logger:
                 logger.error("API: Database error deleting repository %s: %s", repository_name, e)
             return jsonify({"error": ERROR_DATABASE}), 500
+
+
+@api_bp.route("/repositories/<int:repo_id>", methods=["PATCH"])
+@require_api_key_or_csrf
+def api_update_repository_by_id(repo_id):  # pylint: disable=too-many-return-statements # NOSONAR
+    """
+    Updates a repository by its ID.
+    Requires old_secret for verification unless using admin API key.
+
+    Expected JSON payload:
+    {
+        "old_secret": "current-webhook-secret" (required unless admin key),
+        "new_secret": "new-webhook-secret" (optional),
+        "discord_webhook_url": "https://discord.com/api/webhooks/..." (optional),
+        "enabled_events": "star,watch" (optional)
+    }
+    """
+    # Check permission
+    perm_check = check_permission("repositories-update")
+    if perm_check:
+        return perm_check
+
+    # Ensure dependencies are initialized
+    assert get_repository_by_id is not None
+    assert verify_secret is not None
+    assert encrypt_secret is not None
+    assert discord_handler is not None
+    assert get_db is not None
+
+    if logger:
+        logger.info(f"API: Update repository by ID request from {request.remote_addr}")
+    data = request.get_json(silent=True)
+    if not data:
+        if logger:
+            logger.warning("API: Update repository rejected - missing JSON payload")
+        return jsonify({"error": ERROR_MISSING_JSON}), 400
+
+    old_secret = data.get("old_secret", "").strip()
+
+    # Check if user is admin (admin keys can update without secret)
+    is_admin = getattr(g, "is_admin_key", False)
+
+    if not old_secret and not is_admin:
+        if logger:
+            logger.warning("API: Update repository rejected - missing old_secret")
+        return jsonify({"error": "Missing old_secret for verification"}), 400
+
+    # Get repository from database by ID
+    repo_config = get_repository_by_id(repo_id)
+
+    if not repo_config:
+        if logger:
+            logger.warning(f"API: Update repository failed - repository not found: {repo_id}")
+        return jsonify({"error": "Repository not found"}), 404
+
+    # Verify old secret (skip for admin keys)
+    if not is_admin:
+        if not verify_secret(repo_config["secret_encrypted"], old_secret):
+            if logger:
+                logger.warning(
+                    f"API: Update repository {repo_config['repo_full_name']} "
+                    f"failed - invalid secret"
+                )
+            return jsonify({"error": ERROR_INVALID_SECRET}), 403
+    elif logger:
+        logger.info(f"API: Admin key bypassing secret verification for repo {repo_id}")
+
+    # Prepare updates
+    updates = []
+    params = []
+    changes = []
+
+    new_secret = data.get("new_secret", "").strip()
+    if new_secret:
+        updates.append("secret_encrypted = ?")
+        params.append(encrypt_secret(new_secret))
+        changes.append("secret")
+
+    new_discord_webhook_url = data.get("discord_webhook_url", "").strip()
+    if new_discord_webhook_url:
+        if not discord_handler.verify_webhook(new_discord_webhook_url):
+            if logger:
+                logger.warning(
+                    (
+                        f"API: Update repository {repo_config['repo_full_name']} failed - "
+                        f"invalid new Discord webhook"
+                    )
+                )
+            return jsonify({"error": "New Discord webhook URL is invalid or inactive"}), 400
+        updates.append("discord_webhook_url = ?")
+        params.append(new_discord_webhook_url)
+        changes.append("webhook URL")
+
+    enabled_events = data.get("enabled_events", "").strip()
+    if enabled_events:
+        # Validate enabled events
+        events = enabled_events.split(",")
+        valid_events = {"star", "watch"}
+        if not all(event in valid_events for event in events):
+            if logger:
+                logger.warning(
+                    f"API: Update repository rejected - invalid event types: {enabled_events}"
+                )
+            return jsonify({"error": "Invalid event types"}), 400
+        updates.append("enabled_events = ?")
+        params.append(enabled_events)
+        changes.append("events")
+
+    # Check if any updates were requested
+    if not updates:
+        if logger:
+            logger.warning(
+                f"API: Update repository {repo_config['repo_full_name']} "
+                f"rejected - no updates provided"
+            )
+        return jsonify({"error": "No updates provided"}), 400
+
+    # Security: Use pre-defined allowed columns only to prevent SQL injection
+    allowed_columns = {
+        "secret_encrypted": "secret_encrypted = ?",
+        "discord_webhook_url": "discord_webhook_url = ?",
+        "enabled_events": "enabled_events = ?",
+        "updated_at": "updated_at = CURRENT_TIMESTAMP",
+    }
+
+    safe_updates = []
+    for update in updates:
+        column = update.split(" = ")[0]
+        if column in allowed_columns:
+            safe_updates.append(allowed_columns[column])
+
+    params.append(repo_id)
+
+    # Update database
+    try:
+        db = get_db()
+        db.execute(f"UPDATE repositories SET {', '.join(safe_updates)} WHERE repo_id = ?", params)
+        if logger:
+            logger.info(
+                "API: Repository %s (ID: %s) updated successfully - Changed: %s",
+                repo_config["repo_full_name"],
+                repo_id,
+                ", ".join(changes),
+            )
+        return jsonify({"message": "Repository updated successfully"}), 200
+    except sqlite3.Error as e:
+        if logger:
+            logger.error(
+                "API: Database error updating repository %s: %s",
+                repo_config["repo_full_name"],
+                e,
+            )
+        return jsonify({"error": ERROR_DATABASE}), 500
+
+
+@api_bp.route("/repositories/<int:repo_id>", methods=["DELETE"])
+@require_api_key_or_csrf
+def api_delete_repository_by_id(repo_id):  # pylint: disable=too-many-return-statements # NOSONAR
+    """
+    Deletes a repository by its ID.
+    Requires secret for verification.
+
+    Expected JSON payload:
+    {
+        "secret": "webhook-secret"
+    }
+    """
+    # Check permission
+    perm_check = check_permission("repositories-delete")
+    if perm_check:
+        return perm_check
+
+    # Ensure dependencies are initialized
+    assert get_repository_by_id is not None
+    assert verify_secret is not None
+    assert get_db is not None
+
+    if logger:
+        logger.info(f"API: Delete repository by ID request from {request.remote_addr}")
+    data = request.get_json(silent=True)
+    if not data:
+        if logger:
+            logger.warning("API: Delete repository rejected - missing JSON payload")
+        return jsonify({"error": ERROR_MISSING_JSON}), 400
+
+    secret = data.get("secret", "").strip()
+
+    # Check if user is admin (admin keys can delete without secret)
+    is_admin = getattr(g, "is_admin_key", False)
+
+    if not secret and not is_admin:
+        if logger:
+            logger.warning("API: Delete repository rejected - missing secret")
+        return jsonify({"error": "Missing secret"}), 400
+
+    # Get repository from database by ID
+    repo_config = get_repository_by_id(repo_id)
+
+    if not repo_config:
+        if logger:
+            logger.warning(f"API: Delete repository failed - repository not found: {repo_id}")
+        return jsonify({"error": "Repository not found"}), 404
+
+    # Verify secret (skip for admin keys)
+    if not is_admin:
+        if not verify_secret(repo_config["secret_encrypted"], secret):
+            if logger:
+                logger.warning(
+                    f"API: Delete repository {repo_config['repo_full_name']} "
+                    f"failed - invalid secret"
+                )
+            return jsonify({"error": ERROR_INVALID_SECRET}), 403
+    elif logger:
+        logger.info(f"API: Admin key bypassing secret verification for repo {repo_id}")
+
+    # Delete from database
+    try:
+        db = get_db()
+        db.execute("DELETE FROM repositories WHERE repo_id = ?", (repo_id,))
+
+        # Note: We don't decrement total_repositories here because it tracks
+        # cumulative additions. The statistic represents "total repositories ever
+        # added", not current count
+
+        if logger:
+            logger.info(
+                "API: Repository %s (ID: %s) deleted successfully",
+                repo_config["repo_full_name"],
+                repo_id,
+            )
+        return jsonify({"message": "Repository deleted successfully"}), 200
+    except sqlite3.Error as e:
+        if logger:
+            logger.error(
+                "API: Database error deleting repository %s: %s",
+                repo_config["repo_full_name"],
+                e,
+            )
+        return jsonify({"error": ERROR_DATABASE}), 500
 
 
 @api_bp.route("/repositories/verify", methods=["POST"])
@@ -1002,10 +1243,14 @@ def api_get_stats():
         db = get_db()
         current_repos = db.execute("SELECT COUNT(*) as count FROM repositories").fetchone()["count"]
         current_api_keys = db.execute("SELECT COUNT(*) as count FROM api_keys").fetchone()["count"]
-        
+
         # Count active API keys and admin keys
-        active_api_keys = db.execute("SELECT COUNT(*) as count FROM api_keys WHERE is_active = 1").fetchone()["count"]
-        admin_api_keys = db.execute("SELECT COUNT(*) as count FROM api_keys WHERE is_admin_key = 1").fetchone()["count"]
+        active_api_keys = db.execute(
+            "SELECT COUNT(*) as count FROM api_keys WHERE is_active = 1"
+        ).fetchone()["count"]
+        admin_api_keys = db.execute(
+            "SELECT COUNT(*) as count FROM api_keys WHERE is_admin_key = 1"
+        ).fetchone()["count"]
 
         # Organize stats into categories
         response = {

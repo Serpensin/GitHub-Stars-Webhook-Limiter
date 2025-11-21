@@ -19,7 +19,8 @@ FROM python:3.11-alpine
 
 WORKDIR /app
 
-RUN apk add --no-cache curl
+# Install runtime dependencies including PostgreSQL server and client
+RUN apk add --no-cache curl su-exec postgresql postgresql-client postgresql-contrib postgresql-libs libpq-dev
 
 # Copy application files
 COPY *.py .
@@ -39,9 +40,8 @@ COPY README.md .
 # Copy installed Python packages from builder
 COPY --from=builder /install /usr/local
 
-# Initialize PostgreSQL data directory
-RUN addgroup -S postgres && adduser -S postgres -G postgres \
-    && mkdir -p /var/lib/postgresql/data \
+# PostgreSQL is already installed with postgres user/group, just set up the data directory
+RUN mkdir -p /var/lib/postgresql/data \
     && chown -R postgres:postgres /var/lib/postgresql
 
 ENV TERM=xterm
@@ -54,7 +54,9 @@ ARG COMMIT
 
 # Copy entrypoint script
 COPY docker-entrypoint-postgresql.sh /usr/local/bin/
-RUN chmod +x /usr/local/bin/docker-entrypoint-postgresql.sh
+# Fix line endings (convert CRLF to LF) and set permissions
+RUN sed -i 's/\r$//' /usr/local/bin/docker-entrypoint-postgresql.sh && \
+    chmod +x /usr/local/bin/docker-entrypoint-postgresql.sh
 
 EXPOSE 5000 5432
 
@@ -62,7 +64,7 @@ LABEL maintainer="Discord: pika.pika.no.mi (970119359840284743)"
 LABEL commit=$COMMIT
 LABEL description="Listens for GitHub star & watch events, notifies Discord on first-time interactions, with embedded PostgreSQL & Sentry support."
 LABEL release=$BUILD_DATE
-LABEL VERSION="1.4.0"
+LABEL VERSION="2.4.2"
 LABEL url="https://github.com/Serpensin/GitHub-Stars-Webhook-Limiter"
 
 ENTRYPOINT ["/usr/local/bin/docker-entrypoint-postgresql.sh"]

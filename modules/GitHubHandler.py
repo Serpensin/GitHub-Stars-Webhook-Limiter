@@ -30,18 +30,22 @@ class GitHubHandler:
     Handles GitHub API operations including URL parsing and repository data fetching.
     """
 
-    def __init__(self, logger=None):
+    def __init__(self, logger=None, token=None):
         """
         Initialize the GitHub handler.
 
         Args:
             logger: Optional logger instance for logging operations.
+            token: Optional GitHub personal access token for API authentication.
         """
         # Initialize logger
         if logger is None:
             self.logger = logging.getLogger("modules.githubhandler")
         else:
             self.logger = logger.getChild("modules.githubhandler")
+
+        # Store GitHub token
+        self.token = token
 
     def extract_repo_info_from_url(self, repo_url: str) -> tuple[str, str] | None:
         """
@@ -101,9 +105,14 @@ class GitHubHandler:
             if self.logger:
                 self.logger.debug(f"Fetching repository data from GitHub: {owner}/{repo}")
 
+            # Build headers with optional authentication
+            headers = {"Accept": "application/vnd.github.v3+json"}
+            if self.token:
+                headers["Authorization"] = f"Bearer {self.token}"
+
             response = requests.get(
                 f"https://api.github.com/repos/{owner}/{repo}",
-                headers={"Accept": "application/vnd.github.v3+json"},
+                headers=headers,
                 timeout=5,
             )
 

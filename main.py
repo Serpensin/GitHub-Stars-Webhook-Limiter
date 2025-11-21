@@ -21,7 +21,8 @@ import sys
 import time
 
 import sentry_sdk
-from argon2 import PasswordHasher, exceptions as argon2_exceptions
+from argon2 import PasswordHasher
+from argon2 import exceptions as argon2_exceptions
 from cryptography.fernet import Fernet
 from dotenv import load_dotenv
 from flask import Flask, g, render_template, request, send_from_directory, session
@@ -144,7 +145,8 @@ class PostgreSQLConnectionWrapper:
 
     def cursor(self):
         """Return wrapped cursor."""
-        base_cursor = self._conn.cursor()
+        # Ensure cursor uses dict row factory for SQLite compatibility
+        base_cursor = self._conn.cursor(row_factory=psycopg_dict_row)
         return PostgreSQLCursorWrapper(base_cursor)
 
     def commit(self):
@@ -219,7 +221,9 @@ if missing_vars or invalid_vars:
 
     logger.critical("")
     logger.critical("The application cannot start with invalid configuration.")
-    logger.critical("Run 'python .\\scripts\\generate_required_secrets.py' to generate valid secrets.")
+    logger.critical(
+        "Run 'python .\\scripts\\generate_required_secrets.py' to generate valid secrets."
+    )
     logger.critical("=" * 70)
 
     print("\nFATAL ERROR: Invalid environment configuration!")
@@ -261,6 +265,13 @@ logger.info("Admin password hash loaded from environment")
 
 # At this point ADMIN_PASSWORD_HASH is guaranteed to be non-None due to validation above
 assert ADMIN_PASSWORD_HASH is not None, "ADMIN_PASSWORD_HASH should have been validated"
+
+# Initialize GitHub token for API access
+GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN")
+if GITHUB_TOKEN:
+    logger.info("GitHub token loaded from environment")
+else:
+    logger.warning("GitHub token not configured - repository data fetching may fail")
 
 # Initialize Sentry SDK for error monitoring and performance tracing
 sentry_dsn = os.environ.get("SENTRY_DSN")
@@ -341,6 +352,23 @@ def initialize_database():
 
 # Initialize database
 db_handler, db_type, db_info = initialize_database()
+
+
+def convert_query_for_db(query: str) -> str:
+    """
+    Convert SQLite query syntax to PostgreSQL if needed.
+
+    Args:
+        query: SQL query string with ? placeholders (SQLite style)
+
+    Returns:
+        Converted query string for the current database type
+    """
+    if db_type == "postgresql":
+        # Convert ? placeholders to %s for PostgreSQL
+        return query.replace("?", "%s")
+    return query
+
 
 # Initialize database schema
 # With preload_app=True in Gunicorn, this runs once in the master process before forking workers
@@ -497,12 +525,87 @@ try:
     # Index for stat_name is automatically created by UNIQUE constraint - no need for explicit index
 
     logger.info("Database initialization completed successfully")
-        
+
+    # ========================================================================
+    # Auto-create test API key if environment variable is set
+    # ========================================================================
+    test_api_key = os.environ.get("TEST_API_KEY_PLAINTEXT")
+    test_api_key_name = os.environ.get("TEST_API_KEY_NAME", "Auto-Created Test Key")
+
+    if test_api_key:
+        import hashlib
+
+        logger.info("TEST_API_KEY_PLAINTEXT detected - checking for existing test key")
+
+        # Hash the API key (same method as AuthenticationHandler.hash_api_key)
+        key_hash = hashlib.sha256(test_api_key.encode("utf-8")).hexdigest()
+
+        # Check if key already exists using db_handler
+        try:
+            result = db_handler.execute(
+                convert_query_for_db("SELECT id, name FROM api_keys WHERE key_hash = ?"),
+                (key_hash,),
+                commit=False,
+                fetch=True,
+            )
+
+            if result and len(result) > 0:  # type: ignore
+                # Result is a list of rows (dict or tuple depending on DB type)
+                first_row = result[0]  # type: ignore
+                existing_id = (
+                    first_row["id"]
+                    if hasattr(first_row, "__getitem__") and isinstance(first_row, dict)
+                    else first_row[0]
+                )  # type: ignore
+                logger.info(f"Test API key already exists in database (ID: {existing_id})")
+                logger.info("  Skipping creation - using existing key")
+            else:
+                # Create new test API key with all permissions
+                logger.info("Creating test API key with full admin permissions")
+
+                # Calculate max permissions (all bits set)
+                max_permissions = (1 << len(config.PERMISSIONS)) - 1
+
+                # Use database-specific INSERT ... ON CONFLICT
+                # for SQLite/PostgreSQL compatibility
+                if db_type == "postgresql":
+                    insert_query = """INSERT INTO api_keys
+                                      (key_hash, name, permissions, rate_limit,
+                                       is_admin_key, is_active)
+                                      VALUES (%s, %s, %s, %s, %s, %s)
+                                      ON CONFLICT (key_hash) DO NOTHING"""
+                else:  # SQLite
+                    insert_query = """INSERT OR IGNORE INTO api_keys
+                                      (key_hash, name, permissions, rate_limit,
+                                       is_admin_key, is_active)
+                                      VALUES (?, ?, ?, ?, ?, ?)"""
+
+                db_handler.execute(
+                    insert_query,
+                    (key_hash, test_api_key_name, max_permissions, 1000, 1, 1),
+                    commit=True,
+                    fetch=False,
+                )
+
+                # Check if it was actually inserted or already existed
+                result_check = db_handler.execute(
+                    convert_query_for_db("SELECT id FROM api_keys WHERE key_hash = ?"),
+                    (key_hash,),
+                    commit=False,
+                    fetch=True,
+                )
+
+                if result_check and len(result_check) > 0:  # type: ignore
+                    logger.info(f"Test API key ready: '{test_api_key_name}'")
+                    logger.info("  Permissions: -1 (Admin)")
+                    logger.info("  Rate Limit: 1000")
+                    logger.info(f"  Key Hash: {key_hash[:16]}...")
+        except Exception as e:
+            logger.error(f"Failed to create/check test API key: {e}")
+
 except Exception as e:
     logger.critical(f"Database initialization failed: {e}")
     sys.exit(f"Database error: {e}")
-
-
 
 # ============================================================================
 # Signal Handler for Graceful Shutdown
@@ -637,12 +740,14 @@ def _create_sqlite_connection():
     conn.row_factory = sqlite3.Row
 
     # Set optimized PRAGMA settings
-    # Note: WAL mode is already set during database initialization
+    # Run 2: Aggressive WAL settings with larger cache and checkpoint interval
     try:
-        conn.execute("PRAGMA synchronous=NORMAL")  # Faster than FULL, still safe with WAL
-        conn.execute("PRAGMA cache_size=-32000")  # 32MB cache (reduced from 64MB for Docker)
+        conn.execute("PRAGMA journal_mode=WAL")  # Enable Write-Ahead Logging
+        conn.execute("PRAGMA synchronous=OFF")  # Maximum performance (some risk of corruption if power failure)
+        conn.execute("PRAGMA cache_size=-64000")  # 64MB cache (2x baseline)
         conn.execute("PRAGMA temp_store=MEMORY")  # Store temp tables in memory
         conn.execute("PRAGMA busy_timeout=10000")  # Wait up to 10s for locks
+        conn.execute("PRAGMA wal_autocheckpoint=10000")  # Larger checkpoint interval for batch writes
     except sqlite3.Error as e:
         logger.error(f"Error setting PRAGMA settings: {e}")
 
@@ -704,22 +809,6 @@ def get_db():
     return g.db
 
 
-def convert_query_for_db(query: str) -> str:
-    """
-    Convert SQLite query syntax to PostgreSQL if needed.
-
-    Args:
-        query: SQL query string with ? placeholders (SQLite style)
-
-    Returns:
-        Converted query string for the current database type
-    """
-    if db_type == "postgresql":
-        # Convert ? placeholders to %s for PostgreSQL
-        return query.replace("?", "%s")
-    return query
-
-
 @app.teardown_appcontext
 def close_db(exception=None):  # pylint: disable=unused-argument
     """
@@ -778,6 +867,7 @@ auth_handler = AuthenticationHandler(
     get_db_func=get_db,
     bitmap_handler=bitmap_handler,
     server_start_time=SERVER_START_TIME,
+    db_type=db_type,
     logger=logger,
 )
 
@@ -792,7 +882,7 @@ stats_handler = StatisticsHandler(
 discord_handler = DiscordHandler(logger=logger)
 
 # Initialize GitHub handler for repository operations
-github_handler = GitHubHandler(logger=logger)
+github_handler = GitHubHandler(logger=logger, token=GITHUB_TOKEN)
 
 logger.info("Security and authentication handlers initialized")
 
@@ -1099,10 +1189,27 @@ def favicon():
 
 
 if __name__ == "__main__":
-    # When running directly (not via Gunicorn), start the periodic tasks and Flask dev server
     task_manager.start_all_tasks()
     logger.info("Periodic tasks started (direct execution mode)")
 
     logger.info(f"Starting {config.APP_NAME} v{config.APP_VERSION} on port 5000")
-    # Disable debug mode in production for security
-    app.run(host="0.0.0.0", port=5000, debug=os.environ.get("FLASK_DEBUG") == "1")
+
+    debug_mode = os.environ.get("FLASK_DEBUG") == "1"
+
+    if debug_mode:
+        ignore_dir = os.path.abspath(config.APP_NAME)
+
+        def list_files_recursive(directory: str):
+            base = os.path.abspath(directory)
+            for root, _dirs, files in os.walk(base):
+                if os.path.abspath(root).startswith(ignore_dir):
+                    continue
+
+                for f in files:
+                    yield os.path.join(root, f)
+
+        extra_files = list(list_files_recursive("."))
+    else:
+        extra_files = None
+
+    app.run(host="0.0.0.0", port=5000, debug=debug_mode, extra_files=extra_files)

@@ -80,10 +80,10 @@ class GunicornLogger:
     def access(self, resp, _req, environ, _request_time):
         """Log access requests using our custom access logger."""
         user_agent = environ.get("HTTP_USER_AGENT", "-")
-        
+
         # Use DEBUG level for healthcheck requests to reduce noise
         log_level = logging.DEBUG if user_agent == "Healthcheck" else logging.INFO
-        
+
         # Format: IP - - [time] "request" status size "referrer" "user-agent"
         self.access_logger.log(
             log_level,

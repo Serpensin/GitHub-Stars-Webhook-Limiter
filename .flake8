@@ -1,0 +1,14 @@
+[flake8]
+max-line-length = 100
+exclude =
+    .git,
+    __pycache__,
+    env,
+    .env,
+    .venv,
+    venv,
+    Tests,
+    GitHub_Events_Limiter
+per-file-ignores =
+    main.py:E402
+    .config/gunicorn.conf.py:E402,F401,E722

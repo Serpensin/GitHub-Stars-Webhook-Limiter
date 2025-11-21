@@ -20,7 +20,7 @@ from typing import Any, Callable, Literal, Optional
 # Add .config folder to path before importing config and modules
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".config"))
 
-import config  # type: ignore
+import config  # type: ignore  # noqa: E402
 from flask import (  # noqa: E402
     Blueprint,
     jsonify,
@@ -96,7 +96,7 @@ def index():
         # Generate CSRF token if not already in session
         if "csrf_token" not in session:
             session["csrf_token"] = secrets.token_hex(32)
-            session["used_nonces"] = []
+            session["used_nonces"] = {}
             if logger:
                 logger.debug("Generated new CSRF token for session")
 
@@ -106,7 +106,9 @@ def index():
 
         if logger:
             logger.debug(f"Web interface accessed from {request.remote_addr}")
-        return render_template("index.html", csrf_token=session["csrf_token"], app_version=config.APP_VERSION)
+        return render_template(
+            "index.html", csrf_token=session["csrf_token"], app_version=config.APP_VERSION
+        )
     except Exception as e:  # pylint: disable=broad-exception-caught
         if logger:
             logger.error(f"Error serving frontend: {e}")
@@ -212,7 +214,7 @@ def stats_page():
         # Generate CSRF token if not already in session
         if "csrf_token" not in session:
             session["csrf_token"] = secrets.token_hex(32)
-            session["used_nonces"] = []
+            session["used_nonces"] = {}
             if logger:
                 logger.debug("Generated new CSRF token for stats page session")
 
@@ -221,7 +223,9 @@ def stats_page():
 
         if logger:
             logger.debug(f"Stats page accessed from {request.remote_addr}")
-        return render_template("stats.html", csrf_token=session["csrf_token"], app_version=config.APP_VERSION)
+        return render_template(
+            "stats.html", csrf_token=session["csrf_token"], app_version=config.APP_VERSION
+        )
     except Exception as e:  # pylint: disable=broad-exception-caught
         if logger:
             logger.error(f"Error serving stats page: {e}")
@@ -279,7 +283,8 @@ def handle_webhook():  # pylint: disable=too-many-return-statements,too-many-bra
     This endpoint:
     - Handles GitHub's ping event for webhook verification
     - Validates webhook signatures
-    - Processes star and watch events
+    - Responds immediately to prevent GitHub timeout
+    - Processes star and watch events asynchronously
     - Sends Discord notifications for first-time events
     """
     # Ensure dependencies are initialized
@@ -346,8 +351,35 @@ def handle_webhook():  # pylint: disable=too-many-return-statements,too-many-bra
             logger.error(f"Error validating signature for repo {repo_id}: {e}")
         return jsonify({"error": "Signature validation failed"}), 403
 
-    # Update last_event_received timestamp for this repository
+    # Respond immediately to prevent GitHub timeout (process asynchronously)
+    # GitHub expects a quick response, so we acknowledge receipt and process in background
+    import threading
+
+    # Extract sender_id hint for async processing
+    sender_id_hint = data.get("sender", {}).get("id") if isinstance(data, dict) else None
+
+    # Process webhook in background thread
+    thread = threading.Thread(
+        target=_process_webhook_async,
+        args=(data, event_type, repo_id, repo_config, sender_id_hint),
+        daemon=True,
+    )
+    thread.start()
+
+    if logger:
+        logger.info(f"Webhook accepted and queued for processing (repo {repo_id})")
+
+    return jsonify({"message": "Webhook received and queued for processing"}), 200
+
+
+def _process_webhook_async(data, event_type, repo_id, repo_config, sender_id_hint=None):
+    """
+    Process webhook asynchronously to prevent GitHub timeout.
+    This runs in a background thread after responding to GitHub.
+    """
     try:
+        # Update last_event_received timestamp for this repository
+        assert get_db is not None
         db = get_db()
         db.execute(
             "UPDATE repositories SET last_event_received = ? WHERE repo_id = ?",
@@ -358,6 +390,7 @@ def handle_webhook():  # pylint: disable=too-many-return-statements,too-many-bra
     except Exception as e:  # pylint: disable=broad-exception-caught
         if logger:
             logger.error(f"Failed to update last_event_received for repo {repo_id}: {e}")
+        return  # Exit async processing on error
 
     # Increment total events received statistic
     if increment_stat:
@@ -367,34 +400,32 @@ def handle_webhook():  # pylint: disable=too-many-return-statements,too-many-bra
     if event_type not in ["star", "watch"]:
         if logger:
             logger.warning(f"Unsupported event type: {event_type} for repo {repo_id}")
-        return jsonify({"error": "Unsupported event type"}), 422
+        return  # Exit async processing
 
     # Check if this event type is enabled for this repository
     enabled_events = repo_config["enabled_events"].split(",")
     if event_type not in enabled_events:
         if logger:
             logger.info(f"{event_type} event received but not enabled for repo {repo_id}")
-        return (
-            jsonify({"message": f"{event_type} events not enabled for this repository"}),
-            200,
-        )
+        return  # Exit async processing
 
     # Check action
     action = data.get("action")
     if action not in ("created", "started"):  # 'started' is for watch events
         if logger:
             logger.debug(f"Action '{action}' not processed for {event_type} on repo {repo_id}")
-        return jsonify({"message": f"Action '{action}' not processed"}), 200
+        return  # Exit async processing
 
     # Get sender information
-    sender_id = data.get("sender", {}).get("id")
+    sender_id = sender_id_hint or data.get("sender", {}).get("id")
     sender_login = data.get("sender", {}).get("login", "unknown")
     if sender_id is None:
         if logger:
-            logger.warning(f"Webhook rejected for repo {repo_id}: missing sender ID")
-        return jsonify({"error": "Missing sender ID"}), 400
+            logger.warning(f"Webhook processing failed for repo {repo_id}: missing sender ID")
+        return  # Exit async processing
 
     # Check if user has already triggered this event
+    assert has_user_triggered_event_before is not None
     if not has_user_triggered_event_before(sender_id, repo_id, event_type):
         if logger:
             logger.info(
@@ -407,8 +438,9 @@ def handle_webhook():  # pylint: disable=too-many-return-statements,too-many-bra
 
         # Update user statistics - valid event
         try:
-            db = get_db()
+            assert get_db is not None
             assert db_wrapper is not None
+            db = get_db()
             query = db_wrapper.build_upsert_user_statistics_valid()
             db.execute(
                 query,
@@ -422,11 +454,13 @@ def handle_webhook():  # pylint: disable=too-many-return-statements,too-many-bra
             if logger:
                 logger.error(f"Failed to update user statistics for user {sender_id}: {e}")
 
+        assert discord_handler is not None
         if discord_handler.send_notification(
             webhook_url=repo_config["discord_webhook_url"],
             event_data=data,
             event_type=event_type,
         ):
+            assert add_user_event is not None
             add_user_event(sender_id, repo_id, event_type)
 
             # Increment unique events counter
@@ -441,7 +475,7 @@ def handle_webhook():  # pylint: disable=too-many-return-statements,too-many-bra
                     sender_login,
                     repo_id,
                 )
-            return jsonify({"message": "Event processed and notification sent"}), 200
+            return  # Exit async processing
         if logger:
             logger.error(
                 "Failed to send Discord notification for %s from %s on repo %s",
@@ -449,12 +483,13 @@ def handle_webhook():  # pylint: disable=too-many-return-statements,too-many-bra
                 sender_login,
                 repo_id,
             )
-        return jsonify({"error": "Failed to send Discord notification"}), 500
+        return  # Exit async processing
 
     # Duplicate event - update user statistics as invalid
     try:
-        db = get_db()
+        assert get_db is not None
         assert db_wrapper is not None
+        db = get_db()
         query = db_wrapper.build_upsert_user_statistics_invalid()
         db.execute(
             query,
@@ -480,4 +515,4 @@ def handle_webhook():  # pylint: disable=too-many-return-statements,too-many-bra
             sender_id,
             repo_id,
         )
-    return jsonify({"message": "Event already processed for this user"}), 200
+    # Async function - no HTTP response needed

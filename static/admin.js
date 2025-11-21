@@ -19,6 +19,12 @@ function getCSRFToken() {
     return meta ? meta.getAttribute('content') : null;
 }
 
+function generateNonce() {
+    const array = new Uint32Array(4);
+    crypto.getRandomValues(array);
+    return Array.from(array, num => num.toString(16).padStart(8, '0')).join('');
+}
+
 // State
 let isAuthenticated = false;
 let sessionStartTime = null;
@@ -36,6 +42,12 @@ let currentPage = 1;
 let keysPerPage = 10;
 let totalKeys = 0;
 let totalPages = 0;
+
+// Repository pagination state
+let currentRepoPage = 1;
+let reposPerPage = 10;
+let totalRepos = 0;
+let totalRepoPages = 0;
 
 // Store cleanup configuration
 window.cleanupConfig = null;
@@ -1326,6 +1338,10 @@ function switchTab(tabName) {
         loadKeys();
         // Stop live view when leaving logs tab
         stopLiveView();
+    } else if (tabName === 'repositories') {
+        loadRepositories();
+        // Stop live view when leaving logs tab
+        stopLiveView();
     } else if (tabName === 'logs') {
         loadLogFiles();
         loadLogs();
@@ -1638,3 +1654,346 @@ async function downloadLogs() {
 window.toggleKey = toggleKey;
 window.deleteKey = deleteKey;
 window.copyGeneratedKey = copyGeneratedKey;
+
+// ============================================================================
+// REPOSITORY MANAGEMENT FUNCTIONS
+// ============================================================================
+
+async function loadRepositories(page = 1) {
+    try {
+        // Get filter values
+        const nameFilter = document.getElementById('search-repo-name')?.value || '';
+        const eventsFilter = document.getElementById('filter-repo-events')?.value || '';
+        
+        // Build query params
+        const params = new URLSearchParams({
+            page: page,
+            per_page: reposPerPage
+        });
+        
+        if (nameFilter) params.append('name', nameFilter);
+        if (eventsFilter) params.append('events', eventsFilter);
+        
+        const response = await fetch(`/admin/api/repositories?${params}`, {
+            headers: {
+                'X-CSRF-Token': getCSRFToken(),
+                'X-Request-Time': Math.floor(Date.now() / 1000).toString(),
+                'X-Request-Nonce': generateNonce()
+            }
+        });
+        
+        if (response.ok) {
+            const data = await response.json();
+            displayRepositories(data.repositories);
+            updateRepoPagination(data.pagination);
+            resetSessionTimer();
+        } else if (response.status === 401) {
+            const data = await response.json();
+            handleAuthError(data.error);
+        } else {
+            // Server error or other error - show error message
+            throw new Error('Failed to load repositories');
+        }
+    } catch (error) {
+        console.error('Error loading repositories:', error);
+        document.getElementById('repos-list').innerHTML = '<p class="error-message">Failed to load repositories. Please try again.</p>';
+    }
+}
+
+function displayRepositories(repos) {
+    const container = document.getElementById('repos-list');
+    
+    if (repos.length === 0) {
+        container.innerHTML = `
+            <div class="empty-state">
+                <p>No repositories configured yet.</p>
+                <p>Add a repository via the API to get started.</p>
+            </div>
+        `;
+        return;
+    }
+    
+    let html = '<div class="keys-table">';
+    html += '<table>';
+    html += '<thead><tr>';
+    html += '<th style="width: 25%;">Repository</th>';
+    html += '<th style="width: 15%;">Events</th>';
+    html += '<th style="width: 30%;">Discord Webhook</th>';
+    html += '<th style="width: 15%;">Last Event</th>';
+    html += '<th style="width: 15%;">Actions</th>';
+    html += '</tr></thead>';
+    html += '<tbody>';
+    
+    repos.forEach(repo => {
+        const lastEvent = repo.last_event_at ? new Date(repo.last_event_at * 1000).toLocaleString() : 'Never';
+        const events = repo.enabled_events.split(',').map(e => 
+            e === 'star' ? '⭐ Star' : '👁️ Watch'
+        ).join(', ');
+        
+        html += '<tr>';
+        html += `<td><strong>${escapeHtml(repo.repo_full_name)}</strong><br><small>ID: ${repo.repo_id}</small></td>`;
+        html += `<td>${events}</td>`;
+        html += `<td><code style="font-size: 0.8em; word-break: break-all;">${escapeHtml(repo.discord_webhook_url.substring(0, 50))}...</code></td>`;
+        html += `<td><small>${lastEvent}</small></td>`;
+        html += `<td>`;
+        html += `<button class="btn btn-small btn-primary" onclick="editRepository(${repo.repo_id})">Edit</button>`;
+        html += `</td>`;
+        html += '</tr>';
+    });
+    
+    html += '</tbody></table></div>';
+    container.innerHTML = html;
+}
+
+function updateRepoPagination(pagination) {
+    currentRepoPage = pagination.page;
+    totalRepos = pagination.total;
+    totalRepoPages = pagination.total_pages;
+    
+    // Update pagination info
+    const start = totalRepos === 0 ? 0 : (currentRepoPage - 1) * reposPerPage + 1;
+    const end = Math.min(currentRepoPage * reposPerPage, totalRepos);
+    document.getElementById('repo-pagination-info').textContent = 
+        `Showing ${start}-${end} of ${totalRepos} repositories`;
+    
+    // Update pagination buttons
+    const buttonsContainer = document.getElementById('repo-pagination-buttons');
+    let buttonsHtml = '';
+    
+    // Previous button
+    if (currentRepoPage > 1) {
+        buttonsHtml += `<button class="btn btn-small btn-secondary" onclick="loadRepositories(${currentRepoPage - 1})">← Prev</button>`;
+    }
+    
+    // Page numbers
+    const maxButtons = 5;
+    let startPage = Math.max(1, currentRepoPage - Math.floor(maxButtons / 2));
+    let endPage = Math.min(totalRepoPages, startPage + maxButtons - 1);
+    
+    if (endPage - startPage < maxButtons - 1) {
+        startPage = Math.max(1, endPage - maxButtons + 1);
+    }
+    
+    if (startPage > 1) {
+        buttonsHtml += `<button class="btn btn-small btn-secondary" onclick="loadRepositories(1)">1</button>`;
+        if (startPage > 2) {
+            buttonsHtml += '<span style="padding: 0 5px;">...</span>';
+        }
+    }
+    
+    for (let i = startPage; i <= endPage; i++) {
+        const activeClass = i === currentRepoPage ? 'btn-primary' : 'btn-secondary';
+        buttonsHtml += `<button class="btn btn-small ${activeClass}" onclick="loadRepositories(${i})">${i}</button>`;
+    }
+    
+    if (endPage < totalRepoPages) {
+        if (endPage < totalRepoPages - 1) {
+            buttonsHtml += '<span style="padding: 0 5px;">...</span>';
+        }
+        buttonsHtml += `<button class="btn btn-small btn-secondary" onclick="loadRepositories(${totalRepoPages})">${totalRepoPages}</button>`;
+    }
+    
+    // Next button
+    if (currentRepoPage < totalRepoPages) {
+        buttonsHtml += `<button class="btn btn-small btn-secondary" onclick="loadRepositories(${currentRepoPage + 1})">Next →</button>`;
+    }
+    
+    buttonsContainer.innerHTML = buttonsHtml;
+}
+
+function applyRepoFilters() {
+    currentRepoPage = 1;
+    loadRepositories(1);
+}
+
+function clearRepoFilters() {
+    document.getElementById('search-repo-name').value = '';
+    document.getElementById('filter-repo-events').value = '';
+    currentRepoPage = 1;
+    loadRepositories(1);
+}
+
+function changeReposPerPage() {
+    const select = document.getElementById('repos-per-page');
+    reposPerPage = parseInt(select.value);
+    currentRepoPage = 1;
+    loadRepositories(1);
+}
+
+function gotoRepoPage() {
+    const input = document.getElementById('goto-repo-page');
+    const page = parseInt(input.value);
+    if (page >= 1 && page <= totalRepoPages) {
+        loadRepositories(page);
+        input.value = '';
+    }
+}
+
+async function editRepository(repoId) {
+    try {
+        // Fetch repository details
+        const params = new URLSearchParams({ page: 1, per_page: -1 });
+        const response = await fetch(`/admin/api/repositories?${params}`, {
+            headers: {
+                'X-CSRF-Token': getCSRFToken(),
+                'X-Request-Time': Math.floor(Date.now() / 1000).toString(),
+                'X-Request-Nonce': generateNonce()
+            }
+        });
+        
+        if (response.ok) {
+            const data = await response.json();
+            const repo = data.repositories.find(r => r.repo_id === repoId);
+            
+            if (repo) {
+                // Populate modal
+                document.getElementById('edit-repo-id').value = repo.repo_id;
+                document.getElementById('edit-repo-name').value = repo.repo_full_name;
+                document.getElementById('edit-repo-discord').value = repo.discord_webhook_url;
+                document.getElementById('edit-repo-secret').value = '••••••••••••••••'; // Always masked
+                document.getElementById('new-repo-secret').value = '';
+                document.getElementById('new-secret-display').style.display = 'none';
+                
+                // Set event checkboxes
+                const events = repo.enabled_events.split(',');
+                document.getElementById('edit-repo-event-star').checked = events.includes('star');
+                document.getElementById('edit-repo-event-watch').checked = events.includes('watch');
+                
+                // Show modal
+                document.getElementById('edit-repo-modal').style.display = 'block';
+                resetSessionTimer();
+            }
+        }
+    } catch (error) {
+        console.error('Error loading repository:', error);
+        alert('Failed to load repository details');
+    }
+}
+
+function closeEditRepoModal() {
+    document.getElementById('edit-repo-modal').style.display = 'none';
+}
+
+function generateNewRepoSecret() {
+    // Generate a secure random secret
+    const array = new Uint8Array(32);
+    crypto.getRandomValues(array);
+    const secret = btoa(String.fromCharCode(...array)).replace(/[+/=]/g, m => ({'+': '-', '/': '_', '=': ''}[m])).substring(0, 43);
+    
+    document.getElementById('new-repo-secret').value = secret;
+    document.getElementById('new-secret-value').textContent = secret;
+    document.getElementById('new-secret-display').style.display = 'block';
+}
+
+function copyNewRepoSecret() {
+    const secret = document.getElementById('new-secret-value').textContent;
+    navigator.clipboard.writeText(secret).then(() => {
+        const btn = event.target;
+        const originalText = btn.textContent;
+        btn.textContent = 'Copied!';
+        setTimeout(() => btn.textContent = originalText, 2000);
+    });
+}
+
+async function deleteRepository() {
+    const repoId = document.getElementById('edit-repo-id').value;
+    const repoName = document.getElementById('edit-repo-name').value;
+    
+    if (!confirm(`Are you sure you want to delete repository "${repoName}"? This action cannot be undone.`)) {
+        return;
+    }
+    
+    try {
+        const response = await fetch(`/admin/api/repositories/${repoId}`, {
+            method: 'DELETE',
+            headers: {
+                'X-CSRF-Token': getCSRFToken(),
+                'X-Request-Time': Math.floor(Date.now() / 1000).toString(),
+                'X-Request-Nonce': generateNonce()
+            }
+        });
+        
+        if (response.ok) {
+            alert('Repository deleted successfully');
+            closeEditRepoModal();
+            loadRepositories(currentRepoPage);
+        } else {
+            const data = await response.json();
+            alert(`Error: ${data.error || 'Failed to delete repository'}`);
+        }
+        resetSessionTimer();
+    } catch (error) {
+        console.error('Error deleting repository:', error);
+        alert('Failed to delete repository');
+    }
+}
+
+// Handle edit repository form submission
+document.getElementById('edit-repo-form')?.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    
+    const repoId = document.getElementById('edit-repo-id').value;
+    const discordUrl = document.getElementById('edit-repo-discord').value.trim();
+    const newSecret = document.getElementById('new-repo-secret').value.trim();
+    
+    const starChecked = document.getElementById('edit-repo-event-star').checked;
+    const watchChecked = document.getElementById('edit-repo-event-watch').checked;
+    
+    if (!starChecked && !watchChecked) {
+        alert('Please select at least one event type');
+        return;
+    }
+    
+    const events = [];
+    if (starChecked) events.push('star');
+    if (watchChecked) events.push('watch');
+    const enabledEvents = events.join(',');
+    
+    const payload = {
+        discord_webhook_url: discordUrl,
+        enabled_events: enabledEvents
+    };
+    
+    if (newSecret) {
+        payload.new_secret = newSecret;
+    }
+    
+    try {
+        const response = await fetch(`/admin/api/repositories/${repoId}`, {
+            method: 'PATCH',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRF-Token': getCSRFToken(),
+                'X-Request-Time': Math.floor(Date.now() / 1000).toString(),
+                'X-Request-Nonce': generateNonce()
+            },
+            body: JSON.stringify(payload)
+        });
+        
+        if (response.ok) {
+            alert('Repository updated successfully' + (newSecret ? '\n\nDon\'t forget to update your GitHub webhook with the new secret!' : ''));
+            closeEditRepoModal();
+            loadRepositories(currentRepoPage);
+        } else {
+            const data = await response.json();
+            alert(`Error: ${data.error || 'Failed to update repository'}`);
+        }
+        resetSessionTimer();
+    } catch (error) {
+        console.error('Error updating repository:', error);
+        alert('Failed to update repository');
+    }
+});
+
+// Make repository functions globally available
+window.loadRepositories = loadRepositories;
+window.applyRepoFilters = applyRepoFilters;
+window.clearRepoFilters = clearRepoFilters;
+window.changeReposPerPage = changeReposPerPage;
+window.gotoRepoPage = gotoRepoPage;
+window.editRepository = editRepository;
+window.closeEditRepoModal = closeEditRepoModal;
+window.generateNewRepoSecret = generateNewRepoSecret;
+window.copyNewRepoSecret = copyNewRepoSecret;
+window.deleteRepository = deleteRepository;
+

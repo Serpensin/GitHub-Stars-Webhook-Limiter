@@ -1,0 +1,61 @@
+services:
+  # PostgreSQL server container
+  server:
+    build:
+      context: .
+      dockerfile: Dockerfile.postgresql
+    container_name: github-events-limiter-test-server-pg
+    hostname: server
+    ports:
+      - "5000:5000"
+    environment:
+      # Required secrets
+      - ENCRYPTION_KEY
+      - ADMIN_PASSWORD_HASH
+      - FLASK_SECRET_KEY
+      - INTERNAL_SECRET
+      - LOG_LEVEL
+      - IS_DOCKER
+      # PostgreSQL runs inside the container
+      - POSTGRES_HOST=127.0.0.1
+      - POSTGRES_PORT=5432
+      - POSTGRES_DB=github_events
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres_internal_only
+      # Test environment - auto-creates admin API key
+      - TEST_API_KEY_PLAINTEXT
+      - TEST_API_KEY_NAME
+      - TEST_GITHUB_REPO_URL
+      - TEST_DISCORD_WEBHOOK_URL
+      - TEST_INVALID_DISCORD_WEBHOOK_URL
+    volumes:
+      - ./GitHub_Events_Limiter:/app/GitHub_Events_Limiter
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5000/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 30s
+
+  # Test runner container
+  test-runner:
+    build:
+      context: .
+      dockerfile: Dockerfile.test
+    container_name: github-events-limiter-test-runner-pg
+    environment:
+      - TEST_SERVER_URL=http://server:5000
+      - TEST_API_KEY_PLAINTEXT
+      - TEST_GITHUB_REPO_URL
+      - TEST_DISCORD_WEBHOOK_URL
+      - TEST_INVALID_DISCORD_WEBHOOK_URL
+    depends_on:
+      server:
+        condition: service_healthy
+    volumes:
+      - ./Tests:/app/Tests
+      - test-results:/app/test-results
+    command: /bin/sh -c "echo 'Waiting for server...'; sleep 2; cd Tests && python -m pytest . -v --junitxml=/app/test-results/results.xml"
+
+volumes:
+  test-results:

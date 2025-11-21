@@ -8,5 +8,5 @@ CustomModules[loghandler,bitmaphandler]
 aiosqlite
 aiomysql
 asyncpg
-psycopg[pool]
+psycopg[binary,pool]
 motor

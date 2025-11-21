@@ -55,6 +55,7 @@
             <!-- Tab Navigation -->
             <div class="tab-navigation">
                 <button class="tab-button active" onclick="switchTab('api-keys')">🔑 API Keys</button>
+                <button class="tab-button" onclick="switchTab('repositories')">📦 Repositories</button>
                 <button class="tab-button" onclick="switchTab('logs')">📋 Logs</button>
             </div>
 
@@ -188,6 +189,61 @@
                 </div>
             </div>
 
+            <!-- Repositories Tab -->
+            <div id="repositories-tab" class="tab-content">
+                <div class="card">
+                    <div class="keys-header">
+                        <h3>Registered Repositories</h3>
+                    </div>
+                    
+                    <!-- Search and Filters -->
+                    <div class="search-filter-container" style="margin-bottom: 15px; padding: 15px; background: var(--darker-bg); border-radius: 6px;">
+                        <div style="display: flex; gap: 10px; flex-wrap: wrap;">
+                            <input type="text" id="search-repo-name" placeholder="Search by repository name..." 
+                                   onkeypress="if(event.key === 'Enter') applyRepoFilters()"
+                                   style="flex: 1; min-width: 200px; padding: 8px; border-radius: 4px; background: var(--card-bg); color: var(--text-color); border: 1px solid var(--border-color);">
+                            <select id="filter-repo-events" style="padding: 8px; border-radius: 4px; background: var(--card-bg); color: var(--text-color); border: 1px solid var(--border-color);">
+                                <option value="">All Events</option>
+                                <option value="star">Star Only</option>
+                                <option value="watch">Watch Only</option>
+                                <option value="both">Star + Watch</option>
+                            </select>
+                            <button onclick="applyRepoFilters()" class="btn btn-small btn-primary" style="white-space: nowrap;">🔍 Search</button>
+                            <button onclick="clearRepoFilters()" class="btn btn-small btn-secondary" style="white-space: nowrap;">✖ Clear</button>
+                        </div>
+                    </div>
+                    
+                    <div class="pagination-controls" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px; padding: 0 10px; flex-wrap: wrap; gap: 10px;">
+                        <div style="display: flex; align-items: center; gap: 10px;">
+                            <label for="repos-per-page" style="margin: 0;">Repositories per page:</label>
+                            <select id="repos-per-page" onchange="changeReposPerPage()" style="padding: 5px 10px; border-radius: 4px; background: var(--darker-bg); color: var(--text-color); border: 1px solid var(--border-color);">
+                                <option value="10" selected>10</option>
+                                <option value="25">25</option>
+                                <option value="50">50</option>
+                                <option value="100">100</option>
+                                <option value="-1">All</option>
+                            </select>
+                        </div>
+                        <div id="repo-pagination-info" style="color: var(--text-muted); font-size: 0.9em;">
+                            <!-- Pagination info will be inserted here -->
+                        </div>
+                        <div id="goto-repo-page-container" style="display: flex; align-items: center; gap: 10px;">
+                            <label for="goto-repo-page" style="margin: 0; font-size: 0.9em;">Go to page:</label>
+                            <input type="number" id="goto-repo-page" min="1" placeholder="#" 
+                                   onkeypress="if(event.key === 'Enter') gotoRepoPage()" 
+                                   style="width: 60px; padding: 5px; border-radius: 4px; background: var(--darker-bg); color: var(--text-color); border: 1px solid var(--border-color); text-align: center;">
+                            <button onclick="gotoRepoPage()" class="btn btn-small btn-secondary">Go</button>
+                        </div>
+                        <div id="repo-pagination-buttons" style="display: flex; gap: 5px;">
+                            <!-- Pagination buttons will be inserted here -->
+                        </div>
+                    </div>
+                    <div id="repos-list">
+                        <p class="loading">Loading repositories...</p>
+                    </div>
+                </div>
+            </div>
+
             <!-- Logs Tab -->
             <div id="logs-tab" class="tab-content">
                 <div class="card">
@@ -249,6 +305,62 @@
                     <div style="display: flex; gap: 10px; margin-top: 20px;">
                         <button type="submit" class="btn btn-primary">Save Changes</button>
                         <button type="button" class="btn btn-secondary" onclick="closeEditModal()">Cancel</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+
+        <!-- Edit Repository Modal -->
+        <div id="edit-repo-modal" class="modal">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h3>Edit Repository</h3>
+                    <span class="close" onclick="closeEditRepoModal()">&times;</span>
+                </div>
+                <form id="edit-repo-form">
+                    <input type="hidden" id="edit-repo-id">
+                    <div class="form-group">
+                        <label>Repository Name</label>
+                        <input type="text" id="edit-repo-name" disabled style="background: var(--darker-bg); opacity: 0.7;">
+                    </div>
+                    <div class="form-group">
+                        <label for="edit-repo-discord">Discord Webhook URL</label>
+                        <input type="url" id="edit-repo-discord" placeholder="https://discord.com/api/webhooks/..." required>
+                        <small>The Discord webhook URL for notifications</small>
+                    </div>
+                    <div class="form-group">
+                        <label for="edit-repo-secret">Webhook Secret (Encrypted)</label>
+                        <div style="display: flex; gap: 10px; align-items: center;">
+                            <input type="text" id="edit-repo-secret" disabled style="flex: 1; background: var(--darker-bg); opacity: 0.7; font-family: monospace;">
+                            <button type="button" class="btn btn-small btn-secondary" onclick="generateNewRepoSecret()">Generate New</button>
+                        </div>
+                        <small>⚠️ Secrets are always encrypted and never shown in plain text. Generate a new one to update.</small>
+                        <input type="hidden" id="new-repo-secret">
+                        <div id="new-secret-display" style="display: none; margin-top: 10px; padding: 10px; background: var(--darker-bg); border-radius: 4px; border: 1px solid var(--warning-color);">
+                            <p style="margin: 0 0 5px 0; color: var(--warning-color); font-weight: 500;">⚠️ New Secret Generated - Save This!</p>
+                            <div style="display: flex; gap: 10px; align-items: center;">
+                                <code id="new-secret-value" style="flex: 1; padding: 8px; background: var(--card-bg); border-radius: 4px; display: block; word-break: break-all;"></code>
+                                <button type="button" class="btn btn-small btn-secondary" onclick="copyNewRepoSecret()">Copy</button>
+                            </div>
+                            <small style="display: block; margin-top: 5px; color: var(--text-muted);">This secret must be configured in your GitHub webhook settings</small>
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label>Enabled Events</label>
+                        <div class="checkbox-group">
+                            <label class="checkbox-label">
+                                <input type="checkbox" id="edit-repo-event-star" value="star"> Star Events
+                            </label>
+                            <label class="checkbox-label">
+                                <input type="checkbox" id="edit-repo-event-watch" value="watch"> Watch Events
+                            </label>
+                        </div>
+                        <small>Select which GitHub events should trigger Discord notifications</small>
+                    </div>
+                    <div style="display: flex; gap: 10px; margin-top: 20px;">
+                        <button type="submit" class="btn btn-primary">Save Changes</button>
+                        <button type="button" class="btn btn-danger" onclick="deleteRepository()">Delete Repository</button>
+                        <button type="button" class="btn btn-secondary" onclick="closeEditRepoModal()">Cancel</button>
                     </div>
                 </form>
             </div>

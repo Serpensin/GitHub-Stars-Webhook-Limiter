@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: GitHub Stars Webhook Limiter API
-  version: 2.4.0
+  version: 2.4.2
   description: 'A Flask application that listens for GitHub webhook events (star/watch),
     validates them,
 
@@ -471,6 +471,158 @@ paths:
                     example: Repository deleted successfully
         '401':
           description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Repository not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /api/repositories/{repo_id}:
+    patch:
+      tags:
+      - Public API
+      summary: Update repository by ID
+      description: 'Update webhook secret, Discord webhook URL, or enabled events for an existing repository using its ID.
+
+        **Authentication:** Requires the old webhook secret for verification.
+
+        **All update fields are optional** - only provide the fields you want to change:
+        - `new_secret`: Provide only if you want to change the webhook secret
+        - `discord_webhook_url`: Provide only if you want to change the Discord webhook URL
+        - `enabled_events`: Provide only if you want to change the enabled events
+
+        Fields not provided will retain their current values.
+        '
+      security:
+      - bearerAuth: []
+      - sessionAuth: []
+      parameters:
+      - name: repo_id
+        in: path
+        required: true
+        description: GitHub repository ID
+        schema:
+          type: integer
+          example: 1016365856
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                old_secret:
+                  type: string
+                  description: Current webhook secret (required for authentication)
+                  example: current_secret_123
+                new_secret:
+                  type: string
+                  description: New webhook secret (optional - only if changing the secret)
+                  example: new_secret_456
+                discord_webhook_url:
+                  type: string
+                  format: uri
+                  description: New Discord webhook URL (optional - only if changing the webhook URL)
+                  example: https://discord.com/api/webhooks/987654321/hijklmn
+                enabled_events:
+                  type: string
+                  description: Comma-separated list of events to track (optional - only if changing events)
+                  example: star,watch
+              required:
+              - old_secret
+      responses:
+        '200':
+          description: Repository updated successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: Repository updated successfully
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: Forbidden - Invalid secret
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Repository not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+    delete:
+      tags:
+      - Public API
+      summary: Delete repository by ID
+      description: Remove a repository from tracking using its ID. Requires webhook secret for verification.
+      security:
+      - bearerAuth: []
+      - sessionAuth: []
+      parameters:
+      - name: repo_id
+        in: path
+        required: true
+        description: GitHub repository ID
+        schema:
+          type: integer
+          example: 1016365856
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                secret:
+                  type: string
+                  description: Webhook secret for verification
+                  example: my_webhook_secret_123
+              required:
+              - secret
+      responses:
+        '200':
+          description: Repository deleted successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: Repository deleted successfully
+        '400':
+          description: Bad request - Missing secret
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: Forbidden - Invalid secret
           content:
             application/json:
               schema:

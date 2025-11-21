@@ -154,7 +154,7 @@
         <li><strong>Configure GitHub Webhook:</strong>
          <ul>
            <li>Go to your GitHub repository → Settings → Webhooks → Add webhook</li>
-             <li>Set Payload URL to: <code id="webhook-url"></code></li>
+             <li>Set Payload URL to: <code id="webhook-url">{{ request.url_root }}webhook</code></li>
        <li>Set Content type to: <code>application/json</code></li>
                <li>Paste your secret in the "Secret" field</li>
          <li>Select events: <strong>Stars</strong> and/or <strong>Watches</strong></li>
