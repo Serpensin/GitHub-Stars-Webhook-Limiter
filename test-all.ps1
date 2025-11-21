@@ -103,11 +103,20 @@ function Test-Configuration {
     # Prepare environment
     Write-Host "[1/5] Preparing environment..." -ForegroundColor Yellow
     if (Test-Path ".env") {
-        $tempEnv = Get-Content ".env" | ForEach-Object {
-            # Escape $ symbols by doubling them ($ becomes $$)
-            $_ -replace '\$', '$$$$'
-        }
-        $tempEnv | Set-Content ".env.docker" -Encoding UTF8
+        # Copy .env file as-is without modifying $ symbols
+        # Docker Compose handles environment variables correctly when using --env-file
+        Get-Content ".env" | ForEach-Object {
+            if ($_ -match '^([^#][^=]+)=(.*)$') {
+                $key = $matches[1].Trim()
+                $value = $matches[2].Trim()
+                # Remove quotes if present
+                $value = $value -replace '^[''"]|[''"]$', ''
+                "$key=$value"
+            } elseif ($_ -match '^#' -or $_.Trim() -eq '') {
+                # Preserve comments and empty lines
+                $_
+            }
+        } | Set-Content ".env.docker" -Encoding UTF8
         Write-Host "  ✓ Environment prepared" -ForegroundColor Gray
     } else {
         Write-Host "  ✗ ERROR: .env file not found!" -ForegroundColor Red

@@ -54,8 +54,9 @@ jobs:
 
     - name: Prepare Docker environment file
       run: |
-        # Escape $ symbols for docker-compose
-        sed 's/\$/\$\$/g' .env > .env.docker
+        # Copy .env as-is for docker-compose --env-file
+        # Docker Compose handles environment variables correctly
+        cp .env .env.docker
 
     - name: Select compose file
       id: compose
