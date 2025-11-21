@@ -317,7 +317,7 @@ async function deleteRepository() {
 globalThis.addEventListener('DOMContentLoaded', () => {
     const webhookUrlElement = document.getElementById('webhook-url');
     if (webhookUrlElement && !webhookUrlElement.textContent.trim()) {
-        const webhookUrl = `${globalThis.location.origin}/webhook`;
+        const webhookUrl = `${globalThis.location.origin}/send`;
         webhookUrlElement.textContent = webhookUrl;
     }
     

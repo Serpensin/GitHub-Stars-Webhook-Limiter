@@ -744,11 +744,15 @@ def _create_sqlite_connection():
     # Run 2: Aggressive WAL settings with larger cache and checkpoint interval
     try:
         conn.execute("PRAGMA journal_mode=WAL")  # Enable Write-Ahead Logging
-        conn.execute("PRAGMA synchronous=OFF")  # Maximum performance (some risk of corruption if power failure)
+        conn.execute(
+            "PRAGMA synchronous=OFF"
+        )  # Maximum performance (some risk of corruption if power failure)
         conn.execute("PRAGMA cache_size=-64000")  # 64MB cache (2x baseline)
         conn.execute("PRAGMA temp_store=MEMORY")  # Store temp tables in memory
         conn.execute("PRAGMA busy_timeout=10000")  # Wait up to 10s for locks
-        conn.execute("PRAGMA wal_autocheckpoint=10000")  # Larger checkpoint interval for batch writes
+        conn.execute(
+            "PRAGMA wal_autocheckpoint=10000"
+        )  # Larger checkpoint interval for batch writes
     except sqlite3.Error as e:
         logger.error(f"Error setting PRAGMA settings: {e}")
 

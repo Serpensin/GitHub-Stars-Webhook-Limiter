@@ -1890,14 +1890,14 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
-  /webhook:
+  /send:
     post:
       tags:
       - Webhooks
       summary: GitHub webhook receiver
       description: "Receives GitHub webhook events for star and watch actions.\n\n\
         ### Setup Instructions:\n1. Go to your GitHub repository Settings \u2192 Webhooks\n\
-        2. Click \"Add webhook\"\n3. Set Payload URL: `https://your-domain.com/webhook`\n\
+        2. Click \"Add webhook\"\n3. Set Payload URL: `https://your-domain.com/send`\n\
         4. Content type: `application/json`\n5. Secret: Use the secret from `/api/generate-secret`\n\
         6. Select events: **Stars** and **Watches**\n7. Click \"Add webhook\"\n\n\
         The application will verify the signature and send Discord notifications\n\

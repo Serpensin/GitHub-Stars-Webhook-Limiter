@@ -8,7 +8,7 @@ Public-facing routes:
 - /spec: OpenAPI specification (JSON/YAML)
 - /license: MIT License file
 - /stats: Public statistics page (JSON)
-- /webhook: GitHub webhook handler
+- /send: GitHub webhook handler
 """
 
 import os
@@ -275,7 +275,7 @@ def license_file():
     return render_template("license.html", license_text=license_text)
 
 
-@web_bp.route("/webhook", methods=["POST"])
+@web_bp.route("/send", methods=["POST"])
 def handle_webhook():  # pylint: disable=too-many-return-statements,too-many-branches # NOSONAR
     """
     Handles incoming GitHub webhook events (star, watch, ping).

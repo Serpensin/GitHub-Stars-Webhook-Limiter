@@ -191,11 +191,11 @@ function Test-Configuration {
     # Show results
     if ($testExitCode -eq 0) {
         Write-Host "───────────────────────────────────────────────────────────────" -ForegroundColor Green
-        Write-Host "  ✓ $configName: ALL TESTS PASSED" -ForegroundColor Green
+        Write-Host "  ✓ ${configName}: ALL TESTS PASSED" -ForegroundColor Green
         Write-Host "───────────────────────────────────────────────────────────────" -ForegroundColor Green
     } else {
         Write-Host "───────────────────────────────────────────────────────────────" -ForegroundColor Red
-        Write-Host "  ✗ $configName: TESTS FAILED (Exit Code: $testExitCode)" -ForegroundColor Red
+        Write-Host "  ✗ ${configName}: TESTS FAILED (Exit Code: $testExitCode)" -ForegroundColor Red
         Write-Host "───────────────────────────────────────────────────────────────" -ForegroundColor Red
     }
     

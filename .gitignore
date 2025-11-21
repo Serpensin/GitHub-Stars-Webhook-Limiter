@@ -189,3 +189,4 @@ config.json
 
 # Optimization results
 optimization_results/
+.env.docker

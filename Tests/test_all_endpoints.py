@@ -1054,14 +1054,14 @@ class TestAllEndpoints(unittest.TestCase):
     # ========================================================================
 
     def test_webhook_endpoint_get(self):
-        """Test GET /webhook (should reject or return 405)."""
-        response = requests.get(f'{self.base_url}/webhook', timeout=5)
+        """Test GET /send (should reject or return 405)."""
+        response = requests.get(f'{self.base_url}/send', timeout=5)
         self.assertIn(response.status_code, [405, 404])
 
     def test_webhook_endpoint_post_no_signature(self):
-        """Test POST /webhook without GitHub signature."""
+        """Test POST /send without GitHub signature."""
         response = requests.post(
-            f'{self.base_url}/webhook',
+            f'{self.base_url}/send',
             headers={'Content-Type': 'application/json'},
             json={'action': 'created'},
             timeout=5
@@ -1070,7 +1070,7 @@ class TestAllEndpoints(unittest.TestCase):
         self.assertIn(response.status_code, [400, 401, 403])
 
     def test_webhook_ping_event(self):
-        """Test POST /webhook with GitHub ping event."""
+        """Test POST /send with GitHub ping event."""
         payload = {
             "zen": "Design for failure.",
             "hook_id": 123456789,
@@ -1082,7 +1082,7 @@ class TestAllEndpoints(unittest.TestCase):
         }
         
         response = requests.post(
-            f'{self.base_url}/webhook',
+            f'{self.base_url}/send',
             headers={
                 'Content-Type': 'application/json',
                 'X-GitHub-Event': 'ping'
@@ -1097,7 +1097,7 @@ class TestAllEndpoints(unittest.TestCase):
         print("[OK] Webhook ping event handled correctly")
 
     def test_webhook_star_event_with_valid_signature(self):
-        """Test POST /webhook with valid GitHub star event and signature."""
+        """Test POST /send with valid GitHub star event and signature."""
         if not self.test_discord_webhook:
             self.skipTest("TEST_DISCORD_WEBHOOK_URL not configured")
         
@@ -1134,7 +1134,7 @@ class TestAllEndpoints(unittest.TestCase):
             
             # Send webhook request
             response = requests.post(
-                f'{self.base_url}/webhook',
+                f'{self.base_url}/send',
                 headers={
                     'Content-Type': 'application/json',
                     'X-GitHub-Event': 'star',
@@ -1164,7 +1164,7 @@ class TestAllEndpoints(unittest.TestCase):
                 del self.created_repo_secrets[repo_id]
 
     def test_webhook_watch_event_with_valid_signature(self):
-        """Test POST /webhook with valid GitHub watch event and signature."""
+        """Test POST /send with valid GitHub watch event and signature."""
         if not self.test_discord_webhook:
             self.skipTest("TEST_DISCORD_WEBHOOK_URL not configured")
         
@@ -1200,7 +1200,7 @@ class TestAllEndpoints(unittest.TestCase):
             
             # Send webhook request
             response = requests.post(
-                f'{self.base_url}/webhook',
+                f'{self.base_url}/send',
                 headers={
                     'Content-Type': 'application/json',
                     'X-GitHub-Event': 'watch',
@@ -1230,7 +1230,7 @@ class TestAllEndpoints(unittest.TestCase):
                 del self.created_repo_secrets[repo_id]
 
     def test_webhook_invalid_signature(self):
-        """Test POST /webhook with invalid GitHub signature."""
+        """Test POST /send with invalid GitHub signature."""
         if not self.test_discord_webhook:
             self.skipTest("TEST_DISCORD_WEBHOOK_URL not configured")
         
@@ -1261,7 +1261,7 @@ class TestAllEndpoints(unittest.TestCase):
             
             # Send webhook request
             response = requests.post(
-                f'{self.base_url}/webhook',
+                f'{self.base_url}/send',
                 headers={
                     'Content-Type': 'application/json',
                     'X-GitHub-Event': 'star',
@@ -1289,7 +1289,7 @@ class TestAllEndpoints(unittest.TestCase):
                 del self.created_repo_secrets[repo_id]
 
     def test_webhook_unconfigured_repository(self):
-        """Test POST /webhook for repository not in database."""
+        """Test POST /send for repository not in database."""
         payload = {
             "action": "created",
             "repository": {
@@ -1307,7 +1307,7 @@ class TestAllEndpoints(unittest.TestCase):
         signature = f"sha256={mac.hexdigest()}"
         
         response = requests.post(
-            f'{self.base_url}/webhook',
+            f'{self.base_url}/send',
             headers={
                 'Content-Type': 'application/json',
                 'X-GitHub-Event': 'star',

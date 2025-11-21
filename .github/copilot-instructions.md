@@ -23,7 +23,7 @@ PostgreSQL is used **only if ALL five** env vars are set (`POSTGRES_HOST`, `POST
 
 ### Blueprint Architecture
 Routes are organized into three blueprints in `routes/`:
-- **`web.py`**: Public routes (`/`, `/webhook`, `/health`, `/stats`)
+- **`web.py`**: Public routes (`/`, `/send`, `/health`, `/stats`)
 - **`api.py`**: Protected API routes (`/api/*`) - requires API key or CSRF token
 - **`admin.py`**: Admin panel (`/admin/*`) - requires session auth or admin API key
 

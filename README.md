@@ -182,7 +182,7 @@ This will generate all three required secrets at once. Copy the output to your `
 ### 4. Configure GitHub Webhook
 
 1. Go to your GitHub repository → **Settings** → **Webhooks** → **Add webhook**
-2. Set **Payload URL** to: `https://your-domain.com/webhook`
+2. Set **Payload URL** to: `https://your-domain.com/send`
 3. Set **Content type** to: `application/json`
 4. Paste your secret in the **Secret** field (the one you generated/copied in step 3)
 5. Select individual events:
@@ -205,7 +205,7 @@ Star or watch your repository to verify Discord notifications work!
 - `GET /health` - Health check endpoint for monitoring (returns JSON with app and database status)
 
 ### Webhook
-- `POST /webhook` - GitHub webhook endpoint (handles star, watch, ping events)
+- `POST /send` - GitHub webhook endpoint (handles star, watch, ping events)
 
 ### Repository Management API (Protected)
 **Authentication Required**: These endpoints require either:
