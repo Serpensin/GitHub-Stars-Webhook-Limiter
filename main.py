@@ -712,16 +712,13 @@ if db_type == "postgresql":
         # min_size: Minimum connections kept alive
         # max_size: Maximum connections per worker (4 workers * 25 = 100 total max)
         # configure: Set row_factory for all connections from pool
-        # prepare_threshold: Disable prepared statements to avoid worker conflicts
+        # NOTE: prepare_threshold is set to None on each connection to prevent worker conflicts
         _postgres_pool = ConnectionPool(
             conninfo=conninfo,
             min_size=2,  # Keep 2 connections warm per worker
             max_size=25,  # Max 25 connections per worker
             timeout=30.0,  # Wait up to 30s for a connection
-            kwargs={
-                "row_factory": psycopg_dict_row,  # All connections use dict rows
-                "prepare_threshold": 0,  # Disable prepared statements (prevents worker conflicts)
-            },
+            kwargs={"row_factory": psycopg_dict_row},  # All connections use dict rows
         )
         logger.info("PostgreSQL connection pool initialized (min=2, max=25 per worker)")
     except Exception as e:
@@ -768,6 +765,8 @@ def _create_postgresql_connection():
     # Try to use connection pool first
     if _postgres_pool:
         base_conn = _postgres_pool.getconn()
+        # Disable prepared statements to prevent worker conflicts
+        base_conn.prepare_threshold = None
         # Store pool reference to return connection later
         g.using_pool = True  # pylint: disable=assigning-non-slot
     else:
@@ -786,7 +785,7 @@ def _create_postgresql_connection():
             f"dbname={postgres_db}"
         )
 
-        base_conn = psycopg.connect(conninfo, row_factory=psycopg_dict_row)  # type: ignore
+        base_conn = psycopg.connect(conninfo, row_factory=psycopg_dict_row, prepare_threshold=None)  # type: ignore
         g.using_pool = False  # pylint: disable=assigning-non-slot
 
     return PostgreSQLConnectionWrapper(base_conn)
