@@ -60,6 +60,10 @@ jobs:
       matrix:
         platform: [linux/arm/v7, linux/arm64/v8]
         variant: [sqlite, postgresql]
+        exclude:
+          # PostgreSQL server is not well-supported on 32-bit ARM
+          - platform: linux/arm/v7
+            variant: postgresql
 
     steps:
     - name: Checkout Code
@@ -131,6 +135,5 @@ jobs:
           --tag $IMAGE_NAME:postgresql \
           $IMAGE_NAME:latest-postgresql-linux-386 \
           $IMAGE_NAME:latest-postgresql-linux-amd64 \
-          $IMAGE_NAME:latest-postgresql-linux-arm-v7 \
           $IMAGE_NAME:latest-postgresql-linux-arm64-v8
       shell: bash
