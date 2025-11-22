@@ -486,17 +486,17 @@ paths:
       tags:
       - Public API
       summary: Update repository by ID
-      description: 'Update webhook secret, Discord webhook URL, or enabled events for an existing repository using its ID.
+      description: 'Update webhook secret, Discord webhook URL, or enabled events
+        for an existing repository using its ID.
 
         **Authentication:** Requires the old webhook secret for verification.
 
         **All update fields are optional** - only provide the fields you want to change:
-        - `new_secret`: Provide only if you want to change the webhook secret
-        - `discord_webhook_url`: Provide only if you want to change the Discord webhook URL
-        - `enabled_events`: Provide only if you want to change the enabled events
+        - `new_secret`: Provide only if you want to change the webhook secret - `discord_webhook_url`:
+        Provide only if you want to change the Discord webhook URL - `enabled_events`:
+        Provide only if you want to change the enabled events
 
-        Fields not provided will retain their current values.
-        '
+        Fields not provided will retain their current values. '
       security:
       - bearerAuth: []
       - sessionAuth: []
@@ -521,16 +521,19 @@ paths:
                   example: current_secret_123
                 new_secret:
                   type: string
-                  description: New webhook secret (optional - only if changing the secret)
+                  description: New webhook secret (optional - only if changing the
+                    secret)
                   example: new_secret_456
                 discord_webhook_url:
                   type: string
                   format: uri
-                  description: New Discord webhook URL (optional - only if changing the webhook URL)
+                  description: New Discord webhook URL (optional - only if changing
+                    the webhook URL)
                   example: https://discord.com/api/webhooks/987654321/hijklmn
                 enabled_events:
                   type: string
-                  description: Comma-separated list of events to track (optional - only if changing events)
+                  description: Comma-separated list of events to track (optional -
+                    only if changing events)
                   example: star,watch
               required:
               - old_secret
@@ -573,7 +576,8 @@ paths:
       tags:
       - Public API
       summary: Delete repository by ID
-      description: Remove a repository from tracking using its ID. Requires webhook secret for verification.
+      description: Remove a repository from tracking using its ID. Requires webhook
+        secret for verification.
       security:
       - bearerAuth: []
       - sessionAuth: []

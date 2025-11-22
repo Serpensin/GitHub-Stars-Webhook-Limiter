@@ -229,7 +229,9 @@ python main.py
 
 **CRITICAL**: When running manual tests, the server MUST be started in a separate terminal and left running until tests complete. The agent cannot reliably start and test in the same terminal session due to tool limitations.
 
-**All test configurations MUST complete successfully** (no errors, no skips, all 64 tests passing). Use the Docker stack method (`test-stack.ps1`) for automated, reliable testing.
+**IMPORTANT**: The `test-all.ps1` script has a known issue with Argon2 password hash escaping. The GitHub Actions workflow (`.github/workflows/test.yml`) shows the correct approach using Python to escape `$` characters as `$$` for Docker Compose. Until `test-all.ps1` is fixed, use the GitHub Actions workflow as the reference for proper testing procedure.
+
+**All test configurations MUST complete successfully** (no errors, no skips, all 64 tests passing). For reliable automated testing, refer to the GitHub Actions workflow.
 
 ## Development Commands
 
