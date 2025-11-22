@@ -24,6 +24,7 @@ def register_blueprints(app: Flask, helpers: dict):
     """
     # Initialize web routes
     init_web_routes(
+        app,
         helpers["logger"],
         helpers["db_type"],
         helpers["get_repository_by_id"],

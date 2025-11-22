@@ -103,20 +103,38 @@ function Test-Configuration {
     # Prepare environment
     Write-Host "[1/5] Preparing environment..." -ForegroundColor Yellow
     if (Test-Path ".env") {
-        # Copy .env file as-is without modifying $ symbols
-        # Docker Compose handles environment variables correctly when using --env-file
-        Get-Content ".env" | ForEach-Object {
-            if ($_ -match '^([^#][^=]+)=(.*)$') {
-                $key = $matches[1].Trim()
-                $value = $matches[2].Trim()
+        # Use Python to properly escape $ characters for Docker Compose
+        # Docker Compose requires $$ to represent a literal $ in env files
+        $pythonScript = @'
+import os
+
+def escape_for_docker(value):
+    if value:
+        return value.replace('$', '$$')
+    return value
+
+# Read .env file
+env_vars = {}
+with open('.env', 'r') as f:
+    for line in f:
+        line = line.strip()
+        if line and not line.startswith('#'):
+            if '=' in line:
+                key, value = line.split('=', 1)
                 # Remove quotes if present
-                $value = $value -replace '^[''"]|[''"]$', ''
-                "$key=$value"
-            } elseif ($_ -match '^#' -or $_.Trim() -eq '') {
-                # Preserve comments and empty lines
-                $_
-            }
-        } | Set-Content ".env.docker" -Encoding UTF8
+                value = value.strip().strip('"').strip("'")
+                env_vars[key.strip()] = escape_for_docker(value)
+
+# Write .env.docker with escaped values
+with open('.env.docker', 'w') as f:
+    for key, value in env_vars.items():
+        f.write(f'{key}={value}\n')
+'@
+        $pythonScript | python
+        if ($LASTEXITCODE -ne 0) {
+            Write-Host "  ✗ ERROR: Failed to prepare environment file!" -ForegroundColor Red
+            return $false
+        }
         Write-Host "  ✓ Environment prepared" -ForegroundColor Gray
     } else {
         Write-Host "  ✗ ERROR: .env file not found!" -ForegroundColor Red

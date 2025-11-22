@@ -23,6 +23,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".config"))
 import config  # type: ignore  # noqa: E402
 from flask import (  # noqa: E402
     Blueprint,
+    Flask,
     jsonify,
     render_template,
     request,
@@ -35,6 +36,7 @@ from modules.DatabaseWrapper import DatabaseWrapper  # noqa: E402
 web_bp = Blueprint("web", __name__)
 
 # These will be set by main.py when registering blueprints
+app: Optional[Flask] = None
 logger: Optional[Any] = None
 db_wrapper: Optional[DatabaseWrapper] = None
 get_db: Optional[Callable[[], Any]] = None
@@ -50,6 +52,7 @@ get_top_users: Optional[Callable[[str, int], list[dict]]] = None
 
 
 def init_web_routes(
+    _app,
     _logger,
     _db_type: Literal["sqlite", "postgresql"],
     _get_repository_by_id,
@@ -64,10 +67,12 @@ def init_web_routes(
     _get_top_users=None,
 ):
     """Initialize route dependencies"""
-    global logger, db_wrapper, get_db, get_repository_by_id, decrypt_secret, verify_github_signature
+    global app, logger, db_wrapper, get_db, get_repository_by_id
+    global decrypt_secret, verify_github_signature
     global has_user_triggered_event_before, discord_handler, add_user_event
     global increment_stat, get_all_stats, get_top_users
 
+    app = _app
     logger = _logger
     db_wrapper = DatabaseWrapper(_db_type)
     get_db = _get_db
@@ -358,10 +363,15 @@ def handle_webhook():  # pylint: disable=too-many-return-statements,too-many-bra
     # Extract sender_id hint for async processing
     sender_id_hint = data.get("sender", {}).get("id") if isinstance(data, dict) else None
 
-    # Process webhook in background thread
+    # Process webhook in background thread with Flask app context
+    def run_in_context():
+        """Wrapper to run async processing within Flask app context"""
+        assert app is not None
+        with app.app_context():
+            _process_webhook_async(data, event_type, repo_id, repo_config, sender_id_hint)
+
     thread = threading.Thread(
-        target=_process_webhook_async,
-        args=(data, event_type, repo_id, repo_config, sender_id_hint),
+        target=run_in_context,
         daemon=True,
     )
     thread.start()

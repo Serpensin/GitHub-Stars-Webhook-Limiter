@@ -789,7 +789,9 @@ def _create_postgresql_connection():
             f"dbname={postgres_db}"
         )
 
-        base_conn = psycopg.connect(conninfo, row_factory=psycopg_dict_row, prepare_threshold=None)  # type: ignore
+        base_conn = psycopg.connect(
+            conninfo, row_factory=psycopg_dict_row, prepare_threshold=None
+        )  # type: ignore
         g.using_pool = False  # pylint: disable=assigning-non-slot
 
     return PostgreSQLConnectionWrapper(base_conn)
